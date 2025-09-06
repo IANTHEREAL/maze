@@ -9,9 +9,11 @@ import (
 	"image/color"
 	"image/draw"
 	"image/png"
+	"io/ioutil"
 	"log"
 	"math/rand"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	
@@ -65,10 +67,11 @@ type Exploration struct {
 	IsComplete       bool       `json:"is_complete"`
 	IsDead           bool       `json:"is_dead"`
 	FoundGoal        bool       `json:"found_goal"`
+	FixedColorIndex  int        `json:"fixed_color_index"`
 	Generation       int        `json:"generation"`
 }
 
-func NewExploration(id string, startPos, currentPos Position, parentID *string, generation int) *Exploration {
+func NewExploration(id string, startPos, currentPos Position, parentID *string, generation int, fixedColorIndex int) *Exploration {
 	// Match Python version logic exactly
 	pathPositions := []Position{startPos}
 	
@@ -95,6 +98,7 @@ func NewExploration(id string, startPos, currentPos Position, parentID *string, 
 		IsComplete:      false,
 		IsDead:          false,
 		FoundGoal:       false,
+		FixedColorIndex: fixedColorIndex,
 		Generation:      generation,
 	}
 }
@@ -108,22 +112,171 @@ type Game struct {
 	GoalFound                bool
 	WinningExploration       *string
 	NextExplorationID        int
+	TotalSteps               int
+	MaxConcurrentExplorations int
+	ShowOnlyWinner           bool
 }
 
 func NewGame(width, height int, seed int64) *Game {
 	rand.Seed(seed)
 	
 	game := &Game{
-		Width:                   width,
-		Height:                  height,
-		Explorations:            make(map[string]*Exploration),
-		GlobalVisitedPositions:  make(map[Position]bool),
-		GoalFound:               false,
-		NextExplorationID:       0,
+		Width:                     width,
+		Height:                    height,
+		Explorations:              make(map[string]*Exploration),
+		GlobalVisitedPositions:    make(map[Position]bool),
+		GoalFound:                 false,
+		NextExplorationID:         0,
+		TotalSteps:                0,
+		MaxConcurrentExplorations: 0,
+		ShowOnlyWinner:            false,
 	}
 
 	game.generateMaze()
 	return game
+}
+
+// NewGameFromJSON loads game from Python pathsegment_tree.json
+func NewGameFromJSON(jsonFile string) (*Game, error) {
+	fmt.Printf("📂 Loading maze from '%s'...\n", jsonFile)
+	
+	// Read JSON file
+	data, err := ioutil.ReadFile(jsonFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read JSON file: %v", err)
+	}
+	
+	// Parse JSON
+	var treeData PathSegmentTree
+	if err := json.Unmarshal(data, &treeData); err != nil {
+		return nil, fmt.Errorf("failed to parse JSON: %v", err)
+	}
+	
+	// Create game from loaded data
+	game := &Game{
+		Width:                     treeData.Metadata.Width,
+		Height:                    treeData.Metadata.Height,
+		Start:                     treeData.Metadata.Start,
+		Goal:                      treeData.Metadata.Goal,
+		Explorations:              make(map[string]*Exploration),
+		GlobalVisitedPositions:    make(map[Position]bool),
+		GoalFound:                 treeData.Metadata.GoalFound,
+		WinningExploration:        treeData.Metadata.WinningSegment,
+		NextExplorationID:         treeData.Metadata.NextID,
+		TotalSteps:                treeData.Metadata.TotalSteps,
+		MaxConcurrentExplorations: treeData.Metadata.MaxConcurrentSegments,
+		ShowOnlyWinner:            treeData.Metadata.ShowOnlyWinner,
+	}
+	
+	// Convert maze from [][]int to [][]CellType
+	game.Maze = make([][]CellType, game.Height)
+	for y := 0; y < game.Height; y++ {
+		game.Maze[y] = make([]CellType, game.Width)
+		for x := 0; x < game.Width; x++ {
+			game.Maze[y][x] = CellType(treeData.Maze[y][x])
+		}
+	}
+	
+	// Load segments/explorations
+	for segmentID, exploration := range treeData.Segments {
+		game.Explorations[segmentID] = exploration
+	}
+	
+	// Load global visited positions
+	for _, pos := range treeData.GlobalVisitedPositions {
+		game.GlobalVisitedPositions[pos] = true
+	}
+	
+	fmt.Printf("✅ Maze loaded: %dx%d, %d segments, %d visited positions\n", 
+		game.Width, game.Height, len(game.Explorations), len(game.GlobalVisitedPositions))
+		
+	return game, nil
+}
+
+
+// getChildExplorations returns direct child explorations (matching Python version)
+func (g *Game) getChildExplorations(explorationID string) []*Exploration {
+	var children []*Exploration
+	for _, exp := range g.Explorations {
+		if exp.ParentID != nil && *exp.ParentID == explorationID {
+			children = append(children, exp)
+		}
+	}
+	return children
+}
+
+// getExplorationDisplayColorAndStyle returns color and style with parent-child logic (matching Python)
+func (g *Game) getExplorationDisplayColorAndStyle(exp *Exploration) (color.RGBA, int, float32, int) {
+	// Define colors exactly like Python version
+	winnerColor := color.RGBA{255, 109, 0, 255}   // #FF6D00 - Gold  
+	deadColor := color.RGBA{158, 158, 158, 255}    // #9E9E9E - Gray
+	segmentColors := []color.RGBA{
+		{33, 150, 243, 255},  // Blue
+		{156, 39, 176, 255},  // Purple
+		{255, 87, 34, 255},   // Deep Orange
+		{139, 195, 74, 255},  // Light Green
+		{0, 188, 212, 255},   // Cyan
+		{233, 30, 99, 255},   // Pink
+	}
+	
+	// PRIORITY 1: Victory (GOLD) - matching Python logic
+	if exp.FoundGoal {
+		return winnerColor, 3, 1.0, 10
+	}
+	
+	// PRIORITY 2: Death (GRAY) - only if truly dead (no children and hit dead end)
+	if exp.IsDead {
+		childExplorations := g.getChildExplorations(exp.ID)
+		if len(childExplorations) == 0 {  // Truly dead - no children
+			return deadColor, 2, 0.5, 2
+		}
+	}
+	
+	// PRIORITY 3: Parent-child color logic (matching Python complex logic)
+	childExplorations := g.getChildExplorations(exp.ID)
+	
+	if len(childExplorations) == 0 {
+		// No children - use own fixed color
+		baseColorIndex := exp.FixedColorIndex % len(segmentColors)
+		return segmentColors[baseColorIndex], 2, 0.9, 5
+	} else {
+		// Has children - parent color determined by children (complex Python logic)
+		childColors := make(map[interface{}]bool)
+		for _, childExp := range childExplorations {
+			if childExp.FoundGoal {
+				childColors["winner"] = true
+			} else if childExp.IsDead && len(g.getChildExplorations(childExp.ID)) == 0 {
+				childColors["dead"] = true
+			} else {
+				childColorIndex := childExp.FixedColorIndex % len(segmentColors)
+				childColors[childColorIndex] = true
+			}
+		}
+		
+		if len(childColors) == 1 {
+			// All children same color - parent becomes that color
+			for singleColor := range childColors {
+				if singleColor == "winner" {
+					return winnerColor, 3, 1.0, 10
+				} else if singleColor == "dead" {
+					return deadColor, 2, 0.5, 2
+				} else {
+					// All children same segment color
+					colorIdx := singleColor.(int)
+					return segmentColors[colorIdx], 2, 0.9, 5
+				}
+				break
+			}
+		} else {
+			// Children have different colors - keep parent's original color
+			baseColorIndex := exp.FixedColorIndex % len(segmentColors)
+			return segmentColors[baseColorIndex], 2, 0.9, 5
+		}
+	}
+	
+	// Fallback
+	baseColorIndex := exp.FixedColorIndex % len(segmentColors)
+	return segmentColors[baseColorIndex], 2, 0.9, 5
 }
 
 type MazeStatusResponse struct {
@@ -156,6 +309,27 @@ type ExplorationTreeResponse struct {
 	} `json:"global_stats"`
 }
 
+// JSON structures for loading/saving Python pathsegment_tree.json format
+type PathSegmentTree struct {
+	Metadata                 Metadata                   `json:"metadata"`
+	Maze                     [][]int                    `json:"maze"`
+	Segments                 map[string]*Exploration    `json:"segments"`
+	GlobalVisitedPositions   []Position                 `json:"global_visited_positions"`
+}
+
+type Metadata struct {
+	Width                     int     `json:"width"`
+	Height                    int     `json:"height"`
+	Start                     Position `json:"start"`
+	Goal                      Position `json:"goal"`
+	GoalFound                 bool     `json:"goal_found"`
+	WinningSegment            *string  `json:"winning_segment"`
+	ShowOnlyWinner            bool     `json:"show_only_winner"`
+	TotalSteps                int      `json:"total_steps"`
+	MaxConcurrentSegments     int      `json:"max_concurrent_segments"`
+	NextID                    int      `json:"next_id"`
+}
+
 var game *Game
 
 func main() {
@@ -164,7 +338,24 @@ func main() {
 	port := flag.String("port", "8079", "Server port")
 	flag.Parse()
 
-	game = NewGame(31, 31, 42)
+	// Try to load from JSON first, otherwise generate new maze
+	jsonFile := "pathsegment_tree.json"
+	if _, err := os.Stat(jsonFile); err == nil {
+		fmt.Printf("📂 Found existing maze file: %s\n", jsonFile)
+		loadedGame, err := NewGameFromJSON(jsonFile)
+		if err != nil {
+			fmt.Printf("⚠️  Failed to load from JSON: %v\n", err)
+			fmt.Println("🎲 Generating new maze instead...")
+			game = NewGame(31, 31, 42)
+		} else {
+			game = loadedGame
+			fmt.Println("🔄 Loaded existing maze and exploration state")
+		}
+	} else {
+		fmt.Printf("🎲 No existing maze found, generating new maze...\n")
+		game = NewGame(31, 31, 42)
+		fmt.Println("✨ Generated new maze")
+	}
 
 	http.HandleFunc("/maze-status", handleMazeStatus)
 	http.HandleFunc("/exploration-status", handleExplorationStatus)
@@ -268,6 +459,9 @@ func handleReset(w http.ResponseWriter, r *http.Request) {
 	game.GoalFound = false
 	game.WinningExploration = nil
 	game.NextExplorationID = 0
+	game.TotalSteps = 0
+	game.MaxConcurrentExplorations = 0
+	game.ShowOnlyWinner = false
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -442,7 +636,11 @@ func (g *Game) moveExploration(explorationName string, nextPos Position) MoveRes
 	exploration, exists := g.Explorations[explorationName]
 	if !exists {
 		// Create new exploration starting at nextPos
-		exploration = NewExploration(explorationName, nextPos, nextPos, nil, 0)
+		// Assign color index based on creation order (matching Python version logic)
+		colorIndex := g.NextExplorationID % 6  // 6 colors excluding gold/gray
+		g.NextExplorationID++  // Increment after assigning color
+		
+		exploration = NewExploration(explorationName, nextPos, nextPos, nil, 0, colorIndex)
 		g.Explorations[explorationName] = exploration
 		g.GlobalVisitedPositions[nextPos] = true
 		
@@ -593,15 +791,6 @@ func generateMazePNG() ([]byte, error) {
 		"dead":       {158, 158, 158, 255}, // #9E9E9E - Gray dead
 	}
 
-	segmentColors := []color.RGBA{
-		{33, 150, 243, 255},  // Blue
-		{156, 39, 176, 255},  // Purple
-		{255, 87, 34, 255},   // Deep Orange
-		{139, 195, 74, 255},  // Light Green
-		{0, 188, 212, 255},   // Cyan
-		{233, 30, 99, 255},   // Pink
-	}
-
 	// Fill background
 	draw.Draw(img, img.Bounds(), &image.Uniform{colors["background"]}, image.ZP, draw.Src)
 
@@ -661,31 +850,8 @@ func generateMazePNG() ([]byte, error) {
 			continue
 		}
 
-		// Determine color and width (matching Python version logic)
-		var pathColor color.RGBA
-		var lineWidth int
-		
-		if exp.FoundGoal {
-			// Winner gets gold color and thick line (3.0 -> 3px)
-			pathColor = colors["winner"]
-			lineWidth = 3
-		} else if exp.IsDead {
-			// Dead gets gray color and thin line (1.5 -> 2px)
-			pathColor = colors["dead"]
-			lineWidth = 2
-		} else {
-			// Normal segments get assigned colors and medium line (2.0 -> 2px)
-			idStr := strings.TrimPrefix(exp.ID, "s")
-			if idStr == "" || exp.ID == "root" {
-				idStr = "0"
-			}
-			if id, err := strconv.Atoi(idStr); err == nil {
-				pathColor = segmentColors[id%len(segmentColors)]
-			} else {
-				pathColor = segmentColors[0]
-			}
-			lineWidth = 2
-		}
+		// Use complex parent-child color logic (matching Python version exactly)
+		pathColor, lineWidth, _, _ := game.getExplorationDisplayColorAndStyle(exp)
 
 		// Draw path with proper line caps (matching Python's round caps)
 		for i := 1; i < len(exp.PathPositions); i++ {
@@ -715,8 +881,11 @@ func generateMazePNG() ([]byte, error) {
 				outerSize := int(float64(cellSize) * 0.3)  // radius 0.3
 				innerSize := int(float64(cellSize) * 0.15) // radius 0.15
 
+				// Get explorer color using complex parent-child logic (matching Python version)
+				explorerColor, _, _, _ := game.getExplorationDisplayColorAndStyle(exp)
+				
 				// Draw outer diamond with white border (3px border)
-				drawDiamondWithBorder(img, centerX, centerY, outerSize, pathColor, 
+				drawDiamondWithBorder(img, centerX, centerY, outerSize, explorerColor, 
 					color.RGBA{255, 255, 255, 255}, 3)
 				
 				// Draw inner white highlight
@@ -992,40 +1161,16 @@ func generateMazeSVG() string {
 		}
 	}
 
-	// Color palette for explorations
-	segmentColors := []string{
-		"#2196F3", // Blue
-		"#9C27B0", // Purple  
-		"#FF5722", // Deep Orange
-		"#8BC34A", // Light Green
-		"#00BCD4", // Cyan
-		"#E91E63", // Pink
-	}
-	winnerColor := "#FF6D00" // Gold
-	deadColor := "#9E9E9E"   // Gray
-
 	// Draw exploration paths
 	for _, exp := range game.Explorations {
 		if len(exp.PathPositions) < 2 {
 			continue
 		}
 
-		// Determine color
-		color := segmentColors[0]
-		if exp.FoundGoal {
-			color = winnerColor
-		} else if exp.IsDead {
-			color = deadColor
-		} else {
-			// Extract numeric ID for consistent coloring
-			idStr := strings.TrimPrefix(exp.ID, "s")
-			if idStr == "" || exp.ID == "root" {
-				idStr = "0"
-			}
-			if id, err := strconv.Atoi(idStr); err == nil {
-				color = segmentColors[id%len(segmentColors)]
-			}
-		}
+		// Use complex parent-child color logic (matching Python version exactly)
+		colorRGBA, _, _, _ := game.getExplorationDisplayColorAndStyle(exp)
+		// Convert RGBA to hex string for SVG
+		color := fmt.Sprintf("#%02X%02X%02X", colorRGBA.R, colorRGBA.G, colorRGBA.B)
 
 		strokeWidth := 2
 		if exp.FoundGoal {
