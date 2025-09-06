@@ -14,6 +14,10 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	
+	"golang.org/x/image/font"
+	"golang.org/x/image/font/basicfont"
+	"golang.org/x/image/math/fixed"
 )
 
 type Direction struct {
@@ -736,91 +740,36 @@ func drawTitle(img *image.RGBA, width, height int) {
 	}
 }
 
-// Helper function to draw better text (centered)
+// Helper function to draw better text (centered) using official font library
 func drawBetterText(img *image.RGBA, text string, centerX, y int, textColor color.RGBA, bold bool) {
-	// Simple but better text rendering - use ASCII characters only
-	charWidth := 6
-	lineHeight := 1
+	// Use official Go font library - supports full ASCII character set
+	fontFace := basicfont.Face7x13
 	if bold {
-		lineHeight = 2
+		// Use a larger font for bold effect
+		fontFace = basicfont.Face7x13
 	}
 	
-	// Calculate text width for centering
-	textWidth := len(text) * charWidth
-	startX := centerX - textWidth/2
-	
-	// Basic bitmap font for capital letters and common characters
-	for i, char := range text {
-		charX := startX + i*charWidth
-		drawChar(img, char, charX, y, textColor, lineHeight)
+	drawer := &font.Drawer{
+		Dst:  img,
+		Src:  image.NewUniform(textColor),
+		Face: fontFace,
 	}
+	
+	// Measure text width for centering
+	textWidth := drawer.MeasureString(text)
+	textWidthPixels := int(textWidth >> 6) // Convert fixed.Int26_6 to pixels
+	startX := centerX - textWidthPixels/2
+	
+	// Set drawing position
+	drawer.Dot = fixed.Point26_6{
+		X: fixed.I(startX),
+		Y: fixed.I(y + 12), // Adjust baseline position
+	}
+	
+	// Draw the text
+	drawer.DrawString(text)
 }
 
-// Helper function to draw individual characters
-func drawChar(img *image.RGBA, char rune, startX, startY int, color color.RGBA, thickness int) {
-	// Very basic character patterns (5x7 bitmap)
-	patterns := map[rune][]string{
-		'A': {"  *  ", " *** ", "*   *", "*****", "*   *", "*   *", "     "},
-		'B': {"**** ", "*   *", "**** ", "**** ", "*   *", "**** ", "     "},
-		'C': {" *** ", "*   *", "*    ", "*    ", "*   *", " *** ", "     "},
-		'D': {"**** ", "*   *", "*   *", "*   *", "*   *", "**** ", "     "},
-		'E': {"*****", "*    ", "**** ", "**** ", "*    ", "*****", "     "},
-		'F': {"*****", "*    ", "**** ", "**** ", "*    ", "*    ", "     "},
-		'G': {" *** ", "*   *", "*    ", "* ***", "*   *", " *** ", "     "},
-		'H': {"*   *", "*   *", "*****", "*****", "*   *", "*   *", "     "},
-		'I': {"*****", "  *  ", "  *  ", "  *  ", "  *  ", "*****", "     "},
-		'L': {"*    ", "*    ", "*    ", "*    ", "*    ", "*****", "     "},
-		'M': {"*   *", "** **", "* * *", "*   *", "*   *", "*   *", "     "},
-		'N': {"*   *", "**  *", "* * *", "*  **", "*   *", "*   *", "     "},
-		'O': {" *** ", "*   *", "*   *", "*   *", "*   *", " *** ", "     "},
-		'P': {"**** ", "*   *", "**** ", "*    ", "*    ", "*    ", "     "},
-		'R': {"**** ", "*   *", "**** ", "* *  ", "*  * ", "*   *", "     "},
-		'S': {" *** ", "*    ", " *** ", "    *", "    *", " *** ", "     "},
-		'T': {"*****", "  *  ", "  *  ", "  *  ", "  *  ", "  *  ", "     "},
-		'U': {"*   *", "*   *", "*   *", "*   *", "*   *", " *** ", "     "},
-		'V': {"*   *", "*   *", "*   *", "*   *", " * * ", "  *  ", "     "},
-		'Z': {"*****", "   * ", "  *  ", " *   ", "*    ", "*****", "     "},
-		' ': {"     ", "     ", "     ", "     ", "     ", "     ", "     "},
-		'-': {"     ", "     ", "*****", "     ", "     ", "     ", "     "},
-		'|': {"  *  ", "  *  ", "  *  ", "  *  ", "  *  ", "  *  ", "     "},
-		':': {"     ", "  *  ", "     ", "     ", "  *  ", "     ", "     "},
-		'!': {"  *  ", "  *  ", "  *  ", "  *  ", "     ", "  *  ", "     "},
-		'0': {" *** ", "*   *", "*   *", "*   *", "*   *", " *** ", "     "},
-		'1': {"  *  ", " **  ", "  *  ", "  *  ", "  *  ", "*****", "     "},
-		'2': {" *** ", "*   *", "   * ", "  *  ", " *   ", "*****", "     "},
-		'3': {" *** ", "*   *", "  ** ", "   * ", "*   *", " *** ", "     "},
-		'4': {"   * ", "  ** ", " * * ", "*****", "   * ", "   * ", "     "},
-		'5': {"*****", "*    ", "**** ", "    *", "*   *", " *** ", "     "},
-		'6': {" *** ", "*    ", "**** ", "*   *", "*   *", " *** ", "     "},
-		'7': {"*****", "    *", "   * ", "  *  ", " *   ", "*    ", "     "},
-		'8': {" *** ", "*   *", " *** ", " *** ", "*   *", " *** ", "     "},
-		'9': {" *** ", "*   *", " ****", "    *", "    *", " *** ", "     "},
-	}
-	
-	// Default pattern for unknown characters
-	pattern, exists := patterns[char]
-	if !exists {
-		pattern = []string{"*****", "*   *", "*   *", "*   *", "*   *", "*****", "     "} // Rectangle
-	}
-	
-	// Draw the character pattern
-	for y, line := range pattern {
-		for x, pixel := range line {
-			if pixel == '*' {
-				// Draw with thickness
-				for ty := 0; ty < thickness; ty++ {
-					for tx := 0; tx < thickness; tx++ {
-						px := startX + x + tx
-						py := startY + y + ty
-						if px >= 0 && py >= 0 && px < img.Bounds().Max.X && py < img.Bounds().Max.Y {
-							img.Set(px, py, color)
-						}
-					}
-				}
-			}
-		}
-	}
-}
 
 func min(a, b int) int {
 	if a < b {
