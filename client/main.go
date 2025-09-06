@@ -33,6 +33,8 @@ type MazeStatusResponse struct {
 	AvailableMoves       []AvailableMove `json:"available_moves"`
 	IsGoal               bool            `json:"is_goal"`
 	GoalReachedByAny     bool            `json:"goal_reached_by_any"`
+	ExplorationComplete  bool            `json:"exploration_complete"`
+	JunctionPositions    []Position      `json:"junction_positions"`
 }
 
 type MoveRequest struct {
@@ -282,16 +284,28 @@ func displayMazeStatus(status MazeStatusResponse) {
 	fmt.Printf("  🛤️  Junction: %v\n", status.IsJunction)
 	fmt.Printf("  🎯 Goal: %v\n", status.IsGoal)
 	fmt.Printf("  🏆 Any reached goal: %v\n", status.GoalReachedByAny)
+	fmt.Printf("  ✅ Exploration complete: %v\n", status.ExplorationComplete)
 	
-	if len(status.AvailableMoves) == 0 {
-		fmt.Printf("  ➡️  Available moves: None (blocked/wall)\n")
-	} else {
-		fmt.Printf("  ➡️  Available moves (%d):\n", len(status.AvailableMoves))
-		for i, move := range status.AvailableMoves {
-			dirName := getDirectionName(move.Direction)
-			fmt.Printf("    %d. %s to (%d, %d)\n", i+1, dirName, move.TargetPosition.X, move.TargetPosition.Y)
+	if status.ExplorationComplete {
+		if len(status.JunctionPositions) > 0 {
+			fmt.Printf("  🚀 Start new explorations at junction positions:\n")
+			for i, pos := range status.JunctionPositions {
+				fmt.Printf("    %d. maze_client start <new_exploration_name> %d %d\n", i+1, pos.X, pos.Y)
+			}
+		} else {
+			fmt.Printf("  💀 This exploration is complete (reached dead end/goal)\n")
 		}
-		fmt.Printf("  💡 Use: maze_client move <exploration_name> <target_x> <target_y>\n")
+	} else {
+		if len(status.AvailableMoves) == 0 {
+			fmt.Printf("  ➡️  Available moves: None (blocked/wall)\n")
+		} else {
+			fmt.Printf("  ➡️  Available moves (%d):\n", len(status.AvailableMoves))
+			for i, move := range status.AvailableMoves {
+				dirName := getDirectionName(move.Direction)
+				fmt.Printf("    %d. %s to (%d, %d)\n", i+1, dirName, move.TargetPosition.X, move.TargetPosition.Y)
+			}
+			fmt.Printf("  💡 Use: maze_client move <exploration_name> <target_x> <target_y>\n")
+		}
 	}
 }
 

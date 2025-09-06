@@ -286,6 +286,8 @@ type MazeStatusResponse struct {
 	AvailableMoves       []AvailableMove `json:"available_moves"`
 	IsGoal               bool            `json:"is_goal"`
 	GoalReachedByAny     bool            `json:"goal_reached_by_any"`
+	ExplorationComplete  bool            `json:"exploration_complete"`
+	JunctionPositions    []Position      `json:"junction_positions"`
 }
 
 type MoveRequest struct {
@@ -412,6 +414,17 @@ func handleExplorationStatus(w http.ResponseWriter, r *http.Request) {
 
 	pos := exploration.CurrentPosition
 	response := game.getMazeStatus(pos)
+	
+	// Add exploration-specific info
+	response.ExplorationComplete = exploration.IsComplete || !exploration.IsActive
+	
+	// If exploration is complete at a junction, show available positions for new explorations
+	if response.ExplorationComplete && response.IsJunction {
+		// Get junction positions from available moves
+		for _, move := range response.AvailableMoves {
+			response.JunctionPositions = append(response.JunctionPositions, move.TargetPosition)
+		}
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
@@ -613,6 +626,8 @@ func (g *Game) getMazeStatus(pos Position) MazeStatusResponse {
 		AvailableMoves:      availableMoves,
 		IsGoal:              g.isAtGoal(pos),
 		GoalReachedByAny:    g.GoalFound,
+		ExplorationComplete: false, // Will be set by handleExplorationStatus
+		JunctionPositions:   []Position{}, // Will be set by handleExplorationStatus
 	}
 }
 
@@ -677,6 +692,15 @@ func (g *Game) moveExploration(explorationName string, nextPos Position) MoveRes
 		}
 	}
 
+	// Check if exploration is already complete (reached junction/goal/dead end)
+	if exploration.IsComplete || !exploration.IsActive {
+		return MoveResponse{
+			Success: false,
+			Message: "Exploration is complete and cannot move further",
+			NewStatus: "completed",
+		}
+	}
+
 	exploration.CurrentPosition = nextPos
 	exploration.PathPositions = append(exploration.PathPositions, nextPos)
 	g.GlobalVisitedPositions[nextPos] = true
@@ -708,10 +732,13 @@ func (g *Game) moveExploration(explorationName string, nextPos Position) MoveRes
 	}
 
 	if len(validMoves) > 1 {
+		// Junction reached - exploration is complete and becomes inactive (matching Python)
+		exploration.IsActive = false
+		exploration.IsComplete = true
 		return MoveResponse{
 			Success: true,
-			Message: "Junction reached - can branch explorations",
-			NewStatus: "junction",
+			Message: "Junction reached - exploration completed",
+			NewStatus: "junction_complete",
 		}
 	}
 
@@ -846,25 +873,37 @@ func generateMazePNG() ([]byte, error) {
 
 	// Draw exploration paths (matching Python version logic)
 	for _, exp := range game.Explorations {
-		if len(exp.PathPositions) < 2 {
-			continue
+		if len(exp.PathPositions) == 0 {
+			continue // Skip empty paths
 		}
 
 		// Use complex parent-child color logic (matching Python version exactly)
 		pathColor, lineWidth, _, _ := game.getExplorationDisplayColorAndStyle(exp)
 
-		// Draw path with proper line caps (matching Python's round caps)
-		for i := 1; i < len(exp.PathPositions); i++ {
-			prev := exp.PathPositions[i-1]
-			curr := exp.PathPositions[i]
+		if len(exp.PathPositions) == 1 {
+			// Single point exploration - draw a circle marker
+			pos := exp.PathPositions[0]
+			centerX := pos.X*cellSize + cellSize/2
+			centerY := pos.Y*cellSize + cellSize/2 + titleHeight
+			radius := lineWidth * 2 // Make it proportional to line width
 			
-			x1 := prev.X*cellSize + cellSize/2
-			y1 := prev.Y*cellSize + cellSize/2 + titleHeight
-			x2 := curr.X*cellSize + cellSize/2
-			y2 := curr.Y*cellSize + cellSize/2 + titleHeight
+			// Draw circle with border like other markers
+			drawCircleWithBorder(img, centerX, centerY, radius, pathColor, 
+				color.RGBA{255, 255, 255, 255}, 1)
+		} else {
+			// Multi-point exploration - draw path lines
+			for i := 1; i < len(exp.PathPositions); i++ {
+				prev := exp.PathPositions[i-1]
+				curr := exp.PathPositions[i]
+				
+				x1 := prev.X*cellSize + cellSize/2
+				y1 := prev.Y*cellSize + cellSize/2 + titleHeight
+				x2 := curr.X*cellSize + cellSize/2
+				y2 := curr.Y*cellSize + cellSize/2 + titleHeight
 
-			// Use round line caps and joins like Python version
-			drawLineRound(img, x1, y1, x2, y2, pathColor, lineWidth)
+				// Use round line caps and joins like Python version
+				drawLineRound(img, x1, y1, x2, y2, pathColor, lineWidth)
+			}
 		}
 
 		// Draw robot marker for active explorations (matching Python version)
@@ -1163,8 +1202,8 @@ func generateMazeSVG() string {
 
 	// Draw exploration paths
 	for _, exp := range game.Explorations {
-		if len(exp.PathPositions) < 2 {
-			continue
+		if len(exp.PathPositions) == 0 {
+			continue // Skip empty paths
 		}
 
 		// Use complex parent-child color logic (matching Python version exactly)
@@ -1179,22 +1218,34 @@ func generateMazeSVG() string {
 			strokeWidth = 3
 		}
 
-		// Create path string
-		var pathData strings.Builder
-		first := exp.PathPositions[0]
-		pathData.WriteString(fmt.Sprintf("M %f %f", 
-			float64(first.X*cellSize)+float64(cellSize)/2,
-			float64(first.Y*cellSize)+float64(cellSize)/2))
+		if len(exp.PathPositions) == 1 {
+			// Single point exploration - draw a circle marker
+			pos := exp.PathPositions[0]
+			centerX := float64(pos.X*cellSize) + float64(cellSize)/2
+			centerY := float64(pos.Y*cellSize) + float64(cellSize)/2
+			radius := float64(strokeWidth * 2) // Proportional to stroke width
+			
+			svg.WriteString(fmt.Sprintf(`<circle cx="%f" cy="%f" r="%f" fill="%s" stroke="white" stroke-width="1"/>
+`,
+				centerX, centerY, radius, color))
+		} else {
+			// Multi-point exploration - draw path lines
+			var pathData strings.Builder
+			first := exp.PathPositions[0]
+			pathData.WriteString(fmt.Sprintf("M %f %f", 
+				float64(first.X*cellSize)+float64(cellSize)/2,
+				float64(first.Y*cellSize)+float64(cellSize)/2))
 
-		for i := 1; i < len(exp.PathPositions); i++ {
-			pos := exp.PathPositions[i]
-			pathData.WriteString(fmt.Sprintf(" L %f %f",
-				float64(pos.X*cellSize)+float64(cellSize)/2,
-				float64(pos.Y*cellSize)+float64(cellSize)/2))
-		}
+			for i := 1; i < len(exp.PathPositions); i++ {
+				pos := exp.PathPositions[i]
+				pathData.WriteString(fmt.Sprintf(" L %f %f",
+					float64(pos.X*cellSize)+float64(cellSize)/2,
+					float64(pos.Y*cellSize)+float64(cellSize)/2))
+			}
 
-		svg.WriteString(fmt.Sprintf(`<path d="%s" stroke="%s" stroke-width="%d" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+			svg.WriteString(fmt.Sprintf(`<path d="%s" stroke="%s" stroke-width="%d" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
 `, pathData.String(), color, strokeWidth))
+		}
 
 		// Draw robot marker for active explorations
 		if exp.IsActive {
