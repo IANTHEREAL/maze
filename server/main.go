@@ -69,8 +69,18 @@ type Exploration struct {
 }
 
 func NewExploration(id string, startPos, currentPos Position, parentID *string, generation int) *Exploration {
+	// Match Python version logic exactly
 	pathPositions := []Position{startPos}
-	if currentPos != startPos {
+	
+	// Always ensure current position is in path if different from start
+	positionExists := false
+	for _, pos := range pathPositions {
+		if pos.X == currentPos.X && pos.Y == currentPos.Y {
+			positionExists = true
+			break
+		}
+	}
+	if !positionExists {
 		pathPositions = append(pathPositions, currentPos)
 	}
 
@@ -434,6 +444,28 @@ func (g *Game) moveExploration(explorationName string, nextPos Position) MoveRes
 		// Create new exploration starting at nextPos
 		exploration = NewExploration(explorationName, nextPos, nextPos, nil, 0)
 		g.Explorations[explorationName] = exploration
+		g.GlobalVisitedPositions[nextPos] = true
+		
+		// For new exploration, don't duplicate the position
+		if g.isAtGoal(nextPos) {
+			exploration.FoundGoal = true
+			exploration.IsActive = false
+			exploration.IsComplete = true
+			g.GoalFound = true
+			winnerName := explorationName
+			g.WinningExploration = &winnerName
+			return MoveResponse{
+				Success: true,
+				Message: fmt.Sprintf("Goal reached by %s!", explorationName),
+				NewStatus: "goal_reached",
+			}
+		}
+		
+		return MoveResponse{
+			Success: true,
+			Message: fmt.Sprintf("Exploration '%s' started at (%d, %d)", explorationName, nextPos.X, nextPos.Y),
+			NewStatus: "continue",
+		}
 	}
 
 	// Check if this is the very first move to (1,1)
@@ -623,7 +655,7 @@ func generateMazePNG() ([]byte, error) {
 	drawCircleWithBorder(img, goalCenterX, goalCenterY, goalRadius, 
 		colors["goal"], color.RGBA{255, 255, 255, 255}, 2)
 
-	// Draw exploration paths
+	// Draw exploration paths (matching Python version logic)
 	for _, exp := range game.Explorations {
 		if len(exp.PathPositions) < 2 {
 			continue
