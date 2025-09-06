@@ -1,2 +1,4 @@
 maze*client
 maze*server
+__pycache__
+*.png

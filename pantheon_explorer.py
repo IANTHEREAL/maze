@@ -18,6 +18,18 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import numpy as np
 
+
+class NumpyEncoder(json.JSONEncoder):
+    """Custom JSON encoder to handle numpy data types"""
+    def default(self, obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        if isinstance(obj, np.floating):
+            return float(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return super().default(obj)
+
 # Optional imports for GIF creation
 try:
     from PIL import Image
@@ -214,7 +226,27 @@ class MazeGenerator:
 class PathSegmentEngine:
     """Pure PathSegment-based exploration engine"""
     
-    def __init__(self, width: int = 31, height: int = 31, seed: Optional[int] = None):
+    def __init__(self, width: int = 31, height: int = 31, seed: Optional[int] = None, 
+                 load_from_json: Optional[str] = None):
+        """Initialize PathSegmentEngine
+        
+        Args:
+            width: Maze width (used only when generating new maze)
+            height: Maze height (used only when generating new maze) 
+            seed: Random seed (used only when generating new maze)
+            load_from_json: Path to JSON file to load maze from. If provided,
+                          width/height/seed are ignored and maze is loaded from JSON.
+        """
+        
+        if load_from_json and os.path.exists(load_from_json):
+            # Load from JSON file
+            self._init_from_json(load_from_json)
+        else:
+            # Generate new maze
+            self._init_new_maze(width, height, seed)
+    
+    def _init_new_maze(self, width: int, height: int, seed: Optional[int]):
+        """Initialize with a new generated maze"""
         self.maze = MazeGenerator.generate(width, height, seed)
         self.height, self.width = self.maze.shape
         
@@ -225,6 +257,48 @@ class PathSegmentEngine:
         goal_pos = np.where(self.maze == CellType.GOAL.value)
         self.goal = Position(goal_pos[1][0], goal_pos[0][0])
         
+        # Initialize fresh exploration state
+        self._init_exploration_state()
+        
+        # Create root segment for new maze
+        self._create_root_segment()
+    
+    def _init_from_json(self, json_file: str):
+        """Initialize from existing JSON file"""
+        print(f"📂 Loading maze from '{json_file}'...")
+        
+        with open(json_file, 'r', encoding='utf-8') as f:
+            tree_data = json.load(f)
+        
+        # Restore metadata
+        metadata = tree_data["metadata"]
+        self.width = metadata["width"]
+        self.height = metadata["height"]
+        self.start = Position.from_dict(metadata["start"])
+        self.goal = Position.from_dict(metadata["goal"])
+        self.goal_found = metadata["goal_found"]
+        self.winning_segment = metadata["winning_segment"]
+        self.show_only_winner = metadata["show_only_winner"]
+        self.total_steps = metadata["total_steps"]
+        self.max_concurrent_segments = metadata["max_concurrent_segments"]
+        self.next_id = metadata["next_id"]
+        
+        # Restore maze
+        self.maze = np.array(tree_data["maze"])
+        
+        # Restore segments
+        self.segments = {}
+        for seg_id, seg_data in tree_data["segments"].items():
+            self.segments[seg_id] = PathSegment.from_dict(seg_data)
+        
+        # Restore global visited positions
+        self.global_visited_positions = {Position.from_dict(pos_data) 
+                                       for pos_data in tree_data["global_visited_positions"]}
+        
+        print(f"✅ Maze loaded: {self.width}x{self.height}, {len(self.segments)} segments, {len(self.global_visited_positions)} visited positions")
+    
+    def _init_exploration_state(self):
+        """Initialize exploration state for new maze"""
         # PathSegment tree management
         self.segments: Dict[str, PathSegment] = {}
         self.next_id = 0
@@ -240,9 +314,6 @@ class PathSegmentEngine:
         # Statistics
         self.total_steps = 0
         self.max_concurrent_segments = 0
-        
-        # Create root segment
-        self._create_root_segment()
     
     def _create_root_segment(self):
         """Create the initial root segment"""
@@ -454,7 +525,7 @@ class PathSegmentEngine:
         }
         
         with open(filename, 'w', encoding='utf-8') as f:
-            json.dump(tree_data, f, indent=2, ensure_ascii=False)
+            json.dump(tree_data, f, indent=2, ensure_ascii=False, cls=NumpyEncoder)
         
         print(f"💾 PathSegment tree saved to '{filename}'")
         print(f"   📊 {len(self.segments)} segments, {len(self.global_visited_positions)} visited positions")
@@ -819,8 +890,17 @@ def run_pantheon_exploration_with_recording():
     print("🎮 Pantheon Maze Explorer with PathSegment Tree")
     print("=" * 60)
     
-    # Create engine and visualizer
-    engine = PathSegmentEngine(width=31, height=31, seed=42)
+    # Create engine - try to load from JSON first, otherwise generate new maze
+    json_file = "pathsegment_tree.json"
+    if os.path.exists(json_file):
+        print(f"📂 Found existing maze file: {json_file}")
+        engine = PathSegmentEngine(load_from_json=json_file)
+        print("🔄 Loaded existing maze and exploration state")
+    else:
+        print(f"🎲 No existing maze found, generating new maze...")
+        engine = PathSegmentEngine(width=31, height=31, seed=42)
+        print("✨ Generated new maze")
+    
     visualizer = PathSegmentVisualizer(engine)
     
     print(f"📐 Maze size: {engine.width}x{engine.height}")
