@@ -1,9 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"image"
+	"image/color"
+	"image/draw"
+	"image/png"
 	"log"
 	"math/rand"
 	"net/http"
@@ -448,197 +453,49 @@ func handleWebView(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "text/html")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	
-	html := `<!DOCTYPE html>
+	// Write HTML in parts to avoid Go string literal issues
+	fmt.Fprint(w, `<!DOCTYPE html>
 <html>
 <head>
-    <title>🎮 Maze Game - Real-time Viewer</title>
+    <meta charset="UTF-8">
+    <title>Maze Explorer</title>
     <style>
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
-            margin: 0;
-            padding: 20px;
-            background: #f5f5f5;
-        }
-        .header {
-            text-align: center;
-            margin-bottom: 20px;
-        }
-        .container {
-            display: flex;
-            gap: 20px;
-            justify-content: center;
-            flex-wrap: wrap;
-        }
-        .canvas-container {
-            background: white;
-            border-radius: 8px;
-            padding: 20px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-        }
-        .stats {
-            background: white;
-            border-radius: 8px;
-            padding: 20px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-            min-width: 300px;
-            max-width: 400px;
-        }
-        canvas {
-            border: 1px solid #ddd;
-            border-radius: 4px;
-        }
-        .stat-item {
-            display: flex;
-            justify-content: space-between;
-            padding: 8px 0;
-            border-bottom: 1px solid #eee;
-        }
-        .stat-item:last-child {
-            border-bottom: none;
-        }
-        .exploration-list {
-            max-height: 400px;
-            overflow-y: auto;
-            margin-top: 15px;
-        }
-        .exploration-item {
-            background: #f8f9fa;
-            margin: 5px 0;
-            padding: 10px;
-            border-radius: 4px;
-            border-left: 4px solid #007bff;
-        }
-        .exploration-item.active {
-            border-left-color: #28a745;
-        }
-        .exploration-item.dead {
-            border-left-color: #dc3545;
-            opacity: 0.7;
-        }
-        .exploration-item.goal {
-            border-left-color: #ffc107;
-            background: #fff8dc;
-        }
-        .refresh-controls {
-            text-align: center;
-            margin-bottom: 20px;
-        }
-        button {
-            background: #007bff;
-            color: white;
-            border: none;
-            padding: 10px 20px;
-            border-radius: 4px;
-            cursor: pointer;
-            margin: 0 5px;
-        }
-        button:hover {
-            background: #0056b3;
-        }
-        button:disabled {
-            background: #6c757d;
-            cursor: not-allowed;
-        }
-        .auto-refresh {
-            color: #28a745;
-        }
+        body { font-family: monospace; margin: 0; padding: 20px; background: #FFFFFF; }
+        .header { text-align: center; margin-bottom: 20px; }
+        .container { display: flex; justify-content: center; }
+        .canvas-container { background: white; border: 1px solid #ddd; }
+        canvas { display: block; }
     </style>
 </head>
 <body>
     <div class="header">
-        <h1>🎮 Maze Game - Real-time Viewer</h1>
-        <div class="refresh-controls">
-            <button onclick="toggleAutoRefresh()" id="autoBtn">🔄 Start Auto Refresh</button>
-            <button onclick="refreshOnce()">↻ Refresh Once</button>
-            <span id="status">Ready</span>
-        </div>
+        <h1>Multi-Branch BFS Pathfinding</h1>
+        <div>Step: <span id="step">0</span> | Active: <span id="active">0</span> | Total: <span id="total">0</span></div>
     </div>
-    
     <div class="container">
         <div class="canvas-container">
-            <canvas id="mazeCanvas" width="600" height="600"></canvas>
-        </div>
-        
-        <div class="stats">
-            <h3>📊 Game Statistics</h3>
-            <div id="stats-container">
-                <div class="stat-item">
-                    <span>Total Explorations:</span>
-                    <span id="total-explorations">0</span>
-                </div>
-                <div class="stat-item">
-                    <span>Active Explorations:</span>
-                    <span id="active-explorations">0</span>
-                </div>
-                <div class="stat-item">
-                    <span>Goal Found:</span>
-                    <span id="goal-found">❌</span>
-                </div>
-                <div class="stat-item">
-                    <span>Visited Positions:</span>
-                    <span id="visited-positions">0</span>
-                </div>
-            </div>
-            
-            <h3>🔍 Explorations</h3>
-            <div id="explorations-list" class="exploration-list">
-                <!-- Explorations will be populated here -->
-            </div>
+            <canvas id="mazeCanvas" width="800" height="800"></canvas>
         </div>
     </div>
+    <script>`)
 
-    <script>
+	fmt.Fprint(w, `
         const canvas = document.getElementById('mazeCanvas');
         const ctx = canvas.getContext('2d');
-        let autoRefresh = false;
-        let refreshInterval = null;
         let gameData = null;
         
-        // Color palette matching Python implementation
         const COLORS = {
             background: '#FFFFFF',
-            wall: '#E0E0E0',
+            wall: '#E0E0E0', 
             path: '#FAFAFA',
             start: '#4CAF50',
             goal: '#F44336',
-            segmentColors: [
-                '#2196F3',  // Blue
-                '#9C27B0',  // Purple
-                '#FF5722',  // Deep Orange
-                '#8BC34A',  // Light Green
-                '#00BCD4',  // Cyan
-                '#E91E63'   // Pink
-            ],
-            winnerColor: '#FF6D00',  // Gold
-            deadColor: '#9E9E9E',    // Gray
-            robot: '#FF9800'         // Orange
+            segmentColors: ['#2196F3', '#9C27B0', '#FF5722', '#8BC34A', '#00BCD4', '#E91E63'],
+            winnerColor: '#FF6D00',
+            deadColor: '#9E9E9E'
         };
-        
-        function toggleAutoRefresh() {
-            const btn = document.getElementById('autoBtn');
-            const status = document.getElementById('status');
-            
-            if (autoRefresh) {
-                autoRefresh = false;
-                clearInterval(refreshInterval);
-                btn.textContent = '🔄 Start Auto Refresh';
-                status.textContent = 'Manual mode';
-                status.className = '';
-            } else {
-                autoRefresh = true;
-                refreshInterval = setInterval(fetchGameState, 1000);
-                btn.textContent = '⏹ Stop Auto Refresh';
-                status.textContent = 'Auto refreshing...';
-                status.className = 'auto-refresh';
-                fetchGameState(); // Immediate refresh
-            }
-        }
-        
-        function refreshOnce() {
-            fetchGameState();
-        }
         
         async function fetchGameState() {
             try {
@@ -646,98 +503,55 @@ func handleWebView(w http.ResponseWriter, r *http.Request) {
                 const data = await response.json();
                 gameData = data;
                 updateDisplay();
-                document.getElementById('status').textContent = autoRefresh ? 
-                    'Auto refreshing... (Last: ' + new Date().toLocaleTimeString() + ')' : 
-                    'Last updated: ' + new Date().toLocaleTimeString();
             } catch (error) {
-                console.error('Failed to fetch game state:', error);
-                document.getElementById('status').textContent = 'Error fetching data';
+                console.error('Error:', error);
             }
         }
         
         function updateDisplay() {
             if (!gameData) return;
-            
-            updateStats();
-            updateExplorationsList();
+            document.getElementById('active').textContent = gameData.global_stats.active_explorations;
+            document.getElementById('total').textContent = gameData.global_stats.total_explorations;
+            document.getElementById('step').textContent = Object.keys(gameData.explorations).length;
             drawMaze();
         }
         
-        function updateStats() {
-            document.getElementById('total-explorations').textContent = gameData.global_stats.total_explorations;
-            document.getElementById('active-explorations').textContent = gameData.global_stats.active_explorations;
-            document.getElementById('goal-found').textContent = gameData.global_stats.goal_found ? '✅' : '❌';
-            document.getElementById('visited-positions').textContent = gameData.global_stats.visited_positions_count;
-        }
-        
-        function updateExplorationsList() {
-            const container = document.getElementById('explorations-list');
-            container.innerHTML = '';
-            
-            Object.entries(gameData.explorations).forEach(([id, exp]) => {
-                const div = document.createElement('div');
-                div.className = 'exploration-item';
-                
-                if (exp.found_goal) div.className += ' goal';
-                else if (exp.is_dead) div.className += ' dead';
-                else if (exp.is_active) div.className += ' active';
-                
-                const status = exp.found_goal ? '🎯' : exp.is_dead ? '💀' : exp.is_active ? '🚀' : '✅';
-                const parent = exp.parent_id ? exp.parent_id : 'root';
-                
-                div.innerHTML = ` + "`" + `
-                    <strong>${id}</strong> ${status}<br>
-                    <small>Position: (${exp.current_position.x}, ${exp.current_position.y})</small><br>
-                    <small>Path: ${exp.path_positions.length} steps | Parent: ${parent}</small>
-                ` + "`" + `;
-                
-                container.appendChild(div);
-            });
-        }
-        
         async function fetchMazeStructure() {
-            // Fetch maze structure by querying multiple positions
-            const mazeStructure = [];
+            const maze = [];
             for (let y = 0; y < 31; y++) {
-                mazeStructure[y] = [];
+                maze[y] = [];
                 for (let x = 0; x < 31; x++) {
                     try {
-                        const response = await fetch(` + "`" + `/maze-status?x=${x}&y=${y}` + "`" + `);
+                        const response = await fetch('/maze-status?x=' + x + '&y=' + y);
                         const status = await response.json();
-                        // Determine cell type based on status
                         let cellType = 'wall';
                         if (x === 1 && y === 1) cellType = 'start';
                         else if (status.is_goal) cellType = 'goal';
                         else if (status.available_directions.length > 0) cellType = 'path';
-                        
-                        mazeStructure[y][x] = cellType;
+                        maze[y][x] = cellType;
                     } catch (error) {
-                        mazeStructure[y][x] = 'wall';
+                        maze[y][x] = 'wall';
                     }
                 }
             }
-            return mazeStructure;
+            return maze;
         }
         
         let mazeStructure = null;
         
         async function drawMaze() {
             if (!gameData) return;
+            if (!mazeStructure) mazeStructure = await fetchMazeStructure();
             
-            // Only fetch maze structure once
-            if (!mazeStructure) {
-                mazeStructure = await fetchMazeStructure();
-            }
-            
-            const cellSize = canvas.width / 31; // 31x31 maze
+            const cellSize = canvas.width / 31;
             ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
             
-            // Draw maze structure
             for (let y = 0; y < 31; y++) {
                 for (let x = 0; x < 31; x++) {
                     const cellType = mazeStructure[y][x];
                     let color = COLORS.wall;
-                    
                     if (cellType === 'path') color = COLORS.path;
                     else if (cellType === 'start') color = COLORS.start;
                     else if (cellType === 'goal') color = COLORS.goal;
@@ -746,14 +560,17 @@ func handleWebView(w http.ResponseWriter, r *http.Request) {
                     ctx.fillRect(x * cellSize, y * cellSize, cellSize, cellSize);
                     
                     if (cellType === 'start' || cellType === 'goal') {
+                        ctx.fillStyle = color;
+                        ctx.beginPath();
+                        ctx.arc(x * cellSize + cellSize/2, y * cellSize + cellSize/2, cellSize * 0.35, 0, 2 * Math.PI);
+                        ctx.fill();
                         ctx.strokeStyle = 'white';
                         ctx.lineWidth = 2;
-                        ctx.strokeRect(x * cellSize + 1, y * cellSize + 1, cellSize - 2, cellSize - 2);
+                        ctx.stroke();
                     }
                 }
             }
             
-            // Draw explorations
             Object.entries(gameData.explorations).forEach(([id, exp]) => {
                 drawExploration(exp, cellSize);
             });
@@ -762,22 +579,19 @@ func handleWebView(w http.ResponseWriter, r *http.Request) {
         function drawExploration(exp, cellSize) {
             if (exp.path_positions.length < 2) return;
             
-            // Get color for this exploration
             let color = COLORS.segmentColors[0];
-            if (exp.found_goal) {
-                color = COLORS.winnerColor;
-            } else if (exp.is_dead) {
-                color = COLORS.deadColor;
-            } else {
+            if (exp.found_goal) color = COLORS.winnerColor;
+            else if (exp.is_dead) color = COLORS.deadColor;
+            else {
                 const colorIndex = parseInt(exp.id.replace('s', '')) % COLORS.segmentColors.length;
                 color = COLORS.segmentColors[colorIndex] || COLORS.segmentColors[0];
             }
             
-            // Draw path
             ctx.strokeStyle = color;
-            ctx.lineWidth = exp.found_goal ? 4 : exp.is_active ? 3 : 2;
+            ctx.lineWidth = exp.found_goal ? 3 : 2;
             ctx.lineCap = 'round';
             ctx.lineJoin = 'round';
+            ctx.globalAlpha = exp.found_goal ? 1.0 : 0.9;
             
             ctx.beginPath();
             const firstPos = exp.path_positions[0];
@@ -788,17 +602,16 @@ func handleWebView(w http.ResponseWriter, r *http.Request) {
                 ctx.lineTo(pos.x * cellSize + cellSize/2, pos.y * cellSize + cellSize/2);
             }
             ctx.stroke();
+            ctx.globalAlpha = 1.0;
             
-            // Draw robot marker for active explorations
             if (exp.is_active) {
                 const pos = exp.current_position;
                 const centerX = pos.x * cellSize + cellSize/2;
                 const centerY = pos.y * cellSize + cellSize/2;
+                const size = cellSize * 0.3;
                 
-                // Draw diamond shape robot marker
                 ctx.fillStyle = color;
                 ctx.beginPath();
-                const size = cellSize * 0.3;
                 ctx.moveTo(centerX, centerY - size);
                 ctx.lineTo(centerX + size, centerY);
                 ctx.lineTo(centerX, centerY + size);
@@ -806,20 +619,22 @@ func handleWebView(w http.ResponseWriter, r *http.Request) {
                 ctx.closePath();
                 ctx.fill();
                 
-                // White border
-                ctx.strokeStyle = 'white';
-                ctx.lineWidth = 2;
-                ctx.stroke();
+                ctx.fillStyle = 'white';
+                ctx.beginPath();
+                ctx.moveTo(centerX, centerY - size * 0.5);
+                ctx.lineTo(centerX + size * 0.5, centerY);
+                ctx.lineTo(centerX, centerY + size * 0.5);
+                ctx.lineTo(centerX - size * 0.5, centerY);
+                ctx.closePath();
+                ctx.fill();
             }
         }
         
-        // Initialize
+        setInterval(fetchGameState, 1000);
         fetchGameState();
     </script>
 </body>
-</html>`
-
-	fmt.Fprintf(w, html)
+</html>`)
 }
 
 func handleRender(w http.ResponseWriter, r *http.Request) {
@@ -828,13 +643,280 @@ func handleRender(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generate SVG content
-	svgContent := generateMazeSVG()
+	// Generate PNG content
+	pngData, err := generateMazePNG()
+	if err != nil {
+		http.Error(w, "Failed to generate maze image", http.StatusInternalServerError)
+		return
+	}
 
-	// Return SVG content directly
-	w.Header().Set("Content-Type", "image/svg+xml")
-	w.Header().Set("Content-Disposition", "attachment; filename=\"maze.svg\"")
-	fmt.Fprint(w, svgContent)
+	// Return PNG content
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Content-Disposition", "attachment; filename=\"maze.png\"")
+	w.Write(pngData)
+}
+
+func generateMazePNG() ([]byte, error) {
+	cellSize := 20
+	mazeWidth := game.Width * cellSize
+	mazeHeight := game.Height * cellSize
+	
+	// Add title area at top
+	titleHeight := 60
+	totalWidth := mazeWidth
+	totalHeight := mazeHeight + titleHeight
+
+	// Create image with title area
+	img := image.NewRGBA(image.Rect(0, 0, totalWidth, totalHeight))
+
+	// Colors
+	colors := map[string]color.RGBA{
+		"background": {255, 255, 255, 255}, // White
+		"wall":       {224, 224, 224, 255}, // Light gray
+		"path":       {250, 250, 250, 255}, // Very light gray
+		"start":      {76, 175, 80, 255},   // Green
+		"goal":       {244, 67, 54, 255},   // Red
+		"winner":     {255, 109, 0, 255},   // Gold
+		"dead":       {158, 158, 158, 255}, // Gray
+	}
+
+	segmentColors := []color.RGBA{
+		{33, 150, 243, 255},  // Blue
+		{156, 39, 176, 255},  // Purple
+		{255, 87, 34, 255},   // Deep Orange
+		{139, 195, 74, 255},  // Light Green
+		{0, 188, 212, 255},   // Cyan
+		{233, 30, 99, 255},   // Pink
+	}
+
+	// Fill background
+	draw.Draw(img, img.Bounds(), &image.Uniform{colors["background"]}, image.ZP, draw.Src)
+
+	// Draw title area background
+	titleBg := color.RGBA{248, 249, 250, 255} // Light gray background for title
+	for y := 0; y < titleHeight; y++ {
+		for x := 0; x < totalWidth; x++ {
+			img.Set(x, y, titleBg)
+		}
+	}
+	
+	// Draw title content
+	drawTitle(img, totalWidth, titleHeight)
+
+	// Draw maze structure (offset by title height)
+	for y := 0; y < game.Height; y++ {
+		for x := 0; x < game.Width; x++ {
+			cellType := game.Maze[y][x]
+			var cellColor color.RGBA
+
+			switch cellType {
+			case WALL:
+				cellColor = colors["wall"]
+			case PATH:
+				cellColor = colors["path"]
+			case START:
+				cellColor = colors["start"]
+			case GOAL:
+				cellColor = colors["goal"]
+			}
+
+			// Fill cell (offset by title height)
+			for py := y*cellSize + titleHeight; py < (y+1)*cellSize+titleHeight; py++ {
+				for px := x * cellSize; px < (x+1)*cellSize; px++ {
+					img.Set(px, py, cellColor)
+				}
+			}
+		}
+	}
+
+	// Draw exploration paths
+	for _, exp := range game.Explorations {
+		if len(exp.PathPositions) < 2 {
+			continue
+		}
+
+		// Determine color
+		var pathColor color.RGBA
+		if exp.FoundGoal {
+			pathColor = colors["winner"]
+		} else if exp.IsDead {
+			pathColor = colors["dead"]
+		} else {
+			// Extract numeric ID for consistent coloring
+			idStr := strings.TrimPrefix(exp.ID, "s")
+			if idStr == "" || exp.ID == "root" {
+				idStr = "0"
+			}
+			if id, err := strconv.Atoi(idStr); err == nil {
+				pathColor = segmentColors[id%len(segmentColors)]
+			} else {
+				pathColor = segmentColors[0]
+			}
+		}
+
+		// Draw path (simple line drawing) - offset by title height
+		for i := 1; i < len(exp.PathPositions); i++ {
+			prev := exp.PathPositions[i-1]
+			curr := exp.PathPositions[i]
+			
+			x1 := prev.X*cellSize + cellSize/2
+			y1 := prev.Y*cellSize + cellSize/2 + titleHeight
+			x2 := curr.X*cellSize + cellSize/2
+			y2 := curr.Y*cellSize + cellSize/2 + titleHeight
+
+			drawLine(img, x1, y1, x2, y2, pathColor, 2)
+		}
+
+		// Draw robot marker for active explorations
+		if exp.IsActive {
+			pos := exp.CurrentPosition
+			centerX := pos.X*cellSize + cellSize/2
+			centerY := pos.Y*cellSize + cellSize/2 + titleHeight
+			size := cellSize / 4
+
+			// Draw diamond shape
+			drawDiamond(img, centerX, centerY, size, pathColor)
+		}
+	}
+
+	// Encode to PNG
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// Helper function to draw title
+func drawTitle(img *image.RGBA, width, height int) {
+	// Get current statistics
+	stats := game.getExplorationTree()
+	
+	// Title colors
+	textColor := color.RGBA{66, 66, 66, 255}      // Dark gray for text
+	accentColor := color.RGBA{33, 150, 243, 255}  // Blue accent
+	
+	// Draw title bar with gradient
+	for y := 10; y < height-10; y++ {
+		for x := 20; x < width-20; x++ {
+			if y == 15 || y == height-15 {
+				img.Set(x, y, accentColor) // Top and bottom accent lines
+			} else if y > 15 && y < height-15 {
+				// Simple info bar background
+				img.Set(x, y, color.RGBA{255, 255, 255, 200}) // Semi-transparent white
+			}
+		}
+	}
+	
+	// Draw simple status indicators (colored blocks)
+	y := 25
+	
+	// Active explorations indicator (blue blocks)
+	for i := 0; i < min(stats.GlobalStats.ActiveExplorations, 20); i++ {
+		for dy := 0; dy < 8; dy++ {
+			for dx := 0; dx < 8; dx++ {
+				x := 30 + i*10 + dx
+				if x < width-30 {
+					img.Set(x, y+dy, color.RGBA{33, 150, 243, 255})
+				}
+			}
+		}
+	}
+	
+	// Goal found indicator (green block if found)
+	if stats.GlobalStats.GoalFound {
+		for dy := 0; dy < 12; dy++ {
+			for dx := 0; dx < 12; dx++ {
+				x := width - 60 + dx
+				img.Set(x, y-2+dy, color.RGBA{76, 175, 80, 255})
+			}
+		}
+	}
+	
+	// Simple text representation using pixel patterns for "BFS" and exploration count
+	drawPixelText(img, "MULTI-BRANCH BFS", 30, y+15, textColor)
+}
+
+// Helper function to draw simple pixel text (simplified version)
+func drawPixelText(img *image.RGBA, text string, startX, startY int, textColor color.RGBA) {
+	// This is a very basic pixel font implementation
+	// For now, just draw simple blocks to represent text
+	for i, char := range text {
+		if char == ' ' {
+			continue
+		}
+		
+		// Draw a simple block for each character
+		for dy := 0; dy < 5; dy++ {
+			for dx := 0; dx < 3; dx++ {
+				x := startX + i*4 + dx
+				y := startY + dy
+				if x < img.Bounds().Max.X && y < img.Bounds().Max.Y {
+					img.Set(x, y, textColor)
+				}
+			}
+		}
+	}
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// Helper function to draw line
+func drawLine(img *image.RGBA, x0, y0, x1, y1 int, color color.RGBA, width int) {
+	dx := abs(x1 - x0)
+	dy := abs(y1 - y0)
+	sx, sy := 1, 1
+	if x0 > x1 {
+		sx = -1
+	}
+	if y0 > y1 {
+		sy = -1
+	}
+	err := dx - dy
+
+	x, y := x0, y0
+	for {
+		// Draw thick line by drawing multiple pixels
+		for i := -width/2; i <= width/2; i++ {
+			for j := -width/2; j <= width/2; j++ {
+				if x+i >= 0 && y+j >= 0 && x+i < img.Bounds().Max.X && y+j < img.Bounds().Max.Y {
+					img.Set(x+i, y+j, color)
+				}
+			}
+		}
+
+		if x == x1 && y == y1 {
+			break
+		}
+		e2 := 2 * err
+		if e2 > -dy {
+			err -= dy
+			x += sx
+		}
+		if e2 < dx {
+			err += dx
+			y += sy
+		}
+	}
+}
+
+// Helper function to draw diamond
+func drawDiamond(img *image.RGBA, centerX, centerY, size int, color color.RGBA) {
+	for dy := -size; dy <= size; dy++ {
+		width := size - abs(dy)
+		for dx := -width; dx <= width; dx++ {
+			x := centerX + dx
+			y := centerY + dy
+			if x >= 0 && y >= 0 && x < img.Bounds().Max.X && y < img.Bounds().Max.Y {
+				img.Set(x, y, color)
+			}
+		}
+	}
 }
 
 func generateMazeSVG() string {

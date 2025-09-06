@@ -166,10 +166,18 @@ func handleStatusCommand(args []string) {
 	fmt.Printf("  🛤️  Junction: %v\n", status.IsJunction)
 	fmt.Printf("  🎯 Goal: %v\n", status.IsGoal)
 	fmt.Printf("  🏆 Any reached goal: %v\n", status.GoalReachedByAny)
-	fmt.Printf("  ➡️  Available directions: %d\n", len(status.AvailableDirections))
-	for i, dir := range status.AvailableDirections {
-		dirName := getDirectionName(dir)
-		fmt.Printf("    %d. %s (%+d,%+d)\n", i+1, dirName, dir.X, dir.Y)
+	
+	if len(status.AvailableDirections) == 0 {
+		fmt.Printf("  ➡️  Available moves: None (blocked/wall)\n")
+	} else {
+		fmt.Printf("  ➡️  Available moves (%d):\n", len(status.AvailableDirections))
+		for i, dir := range status.AvailableDirections {
+			dirName := getDirectionName(dir)
+			targetX := x + dir.X
+			targetY := y + dir.Y
+			fmt.Printf("    %d. %s to (%d, %d)\n", i+1, dirName, targetX, targetY)
+		}
+		fmt.Printf("  💡 Use: move <exploration_name> <target_x> <target_y>\n")
 	}
 }
 
@@ -313,15 +321,15 @@ func handleRenderCommand() {
 		return
 	}
 
-	// Read SVG content from response
-	svgContent, err := io.ReadAll(resp.Body)
+	// Read PNG content from response
+	pngContent, err := io.ReadAll(resp.Body)
 	if err != nil {
 		fmt.Printf("❌ Error reading response: %v\n", err)
 		return
 	}
 
 	// Save to local file
-	filename := "maze.svg"
+	filename := "maze.png"
 	file, err := os.Create(filename)
 	if err != nil {
 		fmt.Printf("❌ Error creating file: %v\n", err)
@@ -329,7 +337,7 @@ func handleRenderCommand() {
 	}
 	defer file.Close()
 
-	_, err = file.Write(svgContent)
+	_, err = file.Write(pngContent)
 	if err != nil {
 		fmt.Printf("❌ Error writing file: %v\n", err)
 		return
@@ -337,7 +345,7 @@ func handleRenderCommand() {
 
 	fmt.Printf("✅ Maze rendered successfully!\n")
 	fmt.Printf("   📁 File: %s\n", filename)
-	fmt.Printf("   📂 Size: %d bytes\n", len(svgContent))
+	fmt.Printf("   📂 Size: %d bytes\n", len(pngContent))
 }
 
 func showHelp() {
@@ -357,8 +365,8 @@ func showHelp() {
 	fmt.Println("   Shows all explorations, their status, and relationships")
 	fmt.Println()
 	fmt.Println("🖼️ render")
-	fmt.Println("   Generate and save an SVG image of current maze state")
-	fmt.Println("   Image is saved locally as 'maze.svg'")
+	fmt.Println("   Generate and save a PNG image of current maze state")
+	fmt.Println("   Image is saved locally as 'maze.png'")
 	fmt.Println("   Example: render")
 	fmt.Println()
 	fmt.Println("💡 Tips:")
