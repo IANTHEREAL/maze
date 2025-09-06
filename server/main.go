@@ -147,6 +147,7 @@ func main() {
 	game = NewGame(31, 31, 42)
 
 	http.HandleFunc("/maze-status", handleMazeStatus)
+	http.HandleFunc("/exploration-status", handleExplorationStatus)
 	http.HandleFunc("/move", handleMove)
 	http.HandleFunc("/exploration-tree", handleExplorationTree)
 	http.HandleFunc("/web", handleWebView)
@@ -174,6 +175,31 @@ func handleMazeStatus(w http.ResponseWriter, r *http.Request) {
 	y, _ := strconv.Atoi(r.URL.Query().Get("y"))
 	pos := Position{x, y}
 
+	response := game.getMazeStatus(pos)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+func handleExplorationStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	explorationName := r.URL.Query().Get("name")
+	if explorationName == "" {
+		http.Error(w, "Missing exploration name parameter", http.StatusBadRequest)
+		return
+	}
+
+	exploration, exists := game.Explorations[explorationName]
+	if !exists {
+		http.Error(w, "Exploration not found", http.StatusNotFound)
+		return
+	}
+
+	pos := exploration.CurrentPosition
 	response := game.getMazeStatus(pos)
 
 	w.Header().Set("Content-Type", "application/json")
@@ -792,49 +818,57 @@ func drawTitle(img *image.RGBA, width, height int) {
 	// Get current statistics
 	stats := game.getExplorationTree()
 	
-	// Title colors
-	textColor := color.RGBA{66, 66, 66, 255}      // Dark gray for text
-	accentColor := color.RGBA{33, 150, 243, 255}  // Blue accent
+	// Colors
+	bgColor := color.RGBA{248, 249, 250, 255}     // Light background
+	activeColor := color.RGBA{33, 150, 243, 255} // Blue for active
+	goalColor := color.RGBA{76, 175, 80, 255}    // Green for goal
+	deadColor := color.RGBA{158, 158, 158, 255}  // Gray for dead
 	
-	// Draw title bar with gradient
-	for y := 10; y < height-10; y++ {
-		for x := 20; x < width-20; x++ {
-			if y == 15 || y == height-15 {
-				img.Set(x, y, accentColor) // Top and bottom accent lines
-			} else if y > 15 && y < height-15 {
-				// Simple info bar background
-				img.Set(x, y, color.RGBA{255, 255, 255, 200}) // Semi-transparent white
-			}
+	// Clear title area with light background
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			img.Set(x, y, bgColor)
 		}
 	}
 	
-	// Draw simple status indicators (colored blocks)
-	y := 25
+	// Draw status indicators as colored bars
+	barHeight := 8
+	barY := height/2 - barHeight/2
 	
-	// Active explorations indicator (blue blocks)
-	for i := 0; i < min(stats.GlobalStats.ActiveExplorations, 20); i++ {
-		for dy := 0; dy < 8; dy++ {
-			for dx := 0; dx < 8; dx++ {
-				x := 30 + i*10 + dx
-				if x < width-30 {
-					img.Set(x, y+dy, color.RGBA{33, 150, 243, 255})
-				}
-			}
+	// Active explorations (blue bars)
+	activeWidth := min(stats.GlobalStats.ActiveExplorations*15, width-100)
+	for y := barY; y < barY+barHeight; y++ {
+		for x := 20; x < 20+activeWidth; x++ {
+			img.Set(x, y, activeColor)
 		}
 	}
 	
-	// Goal found indicator (green block if found)
+	// Total explorations count (smaller gray bars above active)
+	totalWidth := min(stats.GlobalStats.TotalExplorations*3, width-100)
+	for y := barY-12; y < barY-8; y++ {
+		for x := 20; x < 20+totalWidth; x++ {
+			img.Set(x, y, deadColor)
+		}
+	}
+	
+	// Goal indicator (big green square if found)
 	if stats.GlobalStats.GoalFound {
-		for dy := 0; dy < 12; dy++ {
-			for dx := 0; dx < 12; dx++ {
-				x := width - 60 + dx
-				img.Set(x, y-2+dy, color.RGBA{76, 175, 80, 255})
+		goalSize := 20
+		goalX := width - 40
+		goalY := height/2 - goalSize/2
+		for y := goalY; y < goalY+goalSize; y++ {
+			for x := goalX; x < goalX+goalSize; x++ {
+				img.Set(x, y, goalColor)
+			}
+		}
+		// White checkmark inside
+		for i := 0; i < 8; i++ {
+			img.Set(goalX+6+i, goalY+10+i/2, color.RGBA{255, 255, 255, 255})
+			if i < 4 {
+				img.Set(goalX+6-i, goalY+10+i, color.RGBA{255, 255, 255, 255})
 			}
 		}
 	}
-	
-	// Simple text representation using pixel patterns for "BFS" and exploration count
-	drawPixelText(img, "MULTI-BRANCH BFS", 30, y+15, textColor)
 }
 
 // Helper function to draw simple pixel text (simplified version)
