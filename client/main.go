@@ -66,10 +66,39 @@ type ExplorationTreeResponse struct {
 
 var ServerURL string
 
+const ConfigFile = ".maze_server"
+
+func loadServerConfig() {
+	// Try to load from config file
+	data, err := os.ReadFile(ConfigFile)
+	if err == nil {
+		ServerURL = strings.TrimSpace(string(data))
+	} else {
+		// Default server connection
+		ServerURL = "http://localhost:8079"
+	}
+}
+
+func saveServerConfig(host, port string) error {
+	ServerURL = fmt.Sprintf("http://%s:%s", host, port)
+	return os.WriteFile(ConfigFile, []byte(ServerURL), 0644)
+}
+
+func handleSetCommand(host, port string) {
+	fmt.Printf("🔧 Setting server to %s:%s...\n", host, port)
+	
+	if err := saveServerConfig(host, port); err != nil {
+		fmt.Printf("❌ Error saving config: %v\n", err)
+		return
+	}
+	
+	fmt.Printf("✅ Server set to %s\n", ServerURL)
+	fmt.Println("💡 Configuration saved to .maze_server")
+}
 
 func main() {
-	// Default server connection
-	ServerURL = "http://localhost:8079"
+	// Load server configuration
+	loadServerConfig()
 
 	// Parse command line arguments
 	args := os.Args[1:] // Skip program name
@@ -83,6 +112,14 @@ func main() {
 	command := args[0]
 
 	switch command {
+	case "set":
+		if len(args) != 3 {
+			fmt.Println("❌ Usage: maze_client set <host> <port>")
+			fmt.Println("   Example: maze_client set 34.169.25.230 8079")
+			return
+		}
+		handleSetCommand(args[1], args[2])
+		
 	case "start":
 		if len(args) != 4 {
 			fmt.Println("❌ Usage: maze_client start <exploration_name> <x> <y>")
@@ -184,9 +221,11 @@ func handleStartCommand(name, xStr, yStr string) {
 func showUsage() {
 	fmt.Println("🎮 Maze Game Client")
 	fmt.Println("==================")
+	fmt.Printf("Current server: %s\n", ServerURL)
 	fmt.Println()
 	fmt.Println("Commands:")
 	fmt.Println("  maze_client                           - Reset game (clear all explorations)")
+	fmt.Println("  maze_client set <host> <port>         - Set server address")
 	fmt.Println("  maze_client start <name> <x> <y>      - Start new exploration")
 	fmt.Println("  maze_client status <name>             - Check exploration status")
 	fmt.Println("  maze_client move <name> <x> <y>       - Move exploration")
@@ -194,6 +233,7 @@ func showUsage() {
 	fmt.Println("  maze_client tree                      - Show exploration tree")
 	fmt.Println()
 	fmt.Println("Examples:")
+	fmt.Println("  maze_client set 34.169.25.230 8079")
 	fmt.Println("  maze_client start root 1 1")
 	fmt.Println("  maze_client status root")
 	fmt.Println("  maze_client move root 2 1")
