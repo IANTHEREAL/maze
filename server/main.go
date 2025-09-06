@@ -150,6 +150,7 @@ func main() {
 	http.HandleFunc("/exploration-status", handleExplorationStatus)
 	http.HandleFunc("/move", handleMove)
 	http.HandleFunc("/exploration-tree", handleExplorationTree)
+	http.HandleFunc("/reset", handleReset)
 	http.HandleFunc("/web", handleWebView)
 	http.HandleFunc("/render", handleRender)
 
@@ -234,6 +235,26 @@ func handleExplorationTree(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
+}
+
+func handleReset(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Reset game state
+	game.Explorations = make(map[string]*Exploration)
+	game.GlobalVisitedPositions = make(map[Position]bool)
+	game.GoalFound = false
+	game.WinningExploration = nil
+	game.NextExplorationID = 0
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "Game reset successfully",
+	})
 }
 
 func (g *Game) generateMaze() {

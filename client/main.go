@@ -1,10 +1,8 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -70,137 +68,142 @@ var ServerURL string
 
 
 func main() {
-	// Command line flags
-	host := flag.String("host", "localhost", "Server host")
-	port := flag.String("port", "8079", "Server port")
-	command := flag.String("c", "", "Execute single command and exit (non-interactive)")
-	flag.Parse()
+	// Default server connection
+	ServerURL = "http://localhost:8079"
 
-	ServerURL = fmt.Sprintf("http://%s:%s", *host, *port)
+	// Parse command line arguments
+	args := os.Args[1:] // Skip program name
 
-	// Non-interactive mode
-	if *command != "" {
-		fmt.Printf("🎮 Maze Game Client - %s\n", ServerURL)
-		executeCommand(*command)
-		return
-	}
-
-	// Interactive mode
-	fmt.Printf("🎮 Maze Game Client - connecting to %s\n", ServerURL)
-	fmt.Println("==================================================")
-	fmt.Println("Available commands:")
-	fmt.Println("  status <exploration>        - Check exploration's current position")
-	fmt.Println("  status <x> <y>              - Check specific coordinates")
-	fmt.Println("  move <exploration> <x> <y>  - Move exploration to position")
-	fmt.Println("  tree                        - Show exploration tree")
-	fmt.Println("  render                      - Generate and save maze image")
-	fmt.Println("  help                        - Show this help")
-	fmt.Println("  quit                        - Exit client")
-	fmt.Println()
-	fmt.Println("💡 Non-interactive mode: use -c \"command\" to run single command")
-	fmt.Println()
-
-	scanner := bufio.NewScanner(os.Stdin)
-
-	for {
-		fmt.Print("maze> ")
-		if !scanner.Scan() {
-			break
-		}
-
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-
-		executeCommand(line)
-	}
-}
-
-func executeCommand(line string) {
-	args := strings.Fields(line)
 	if len(args) == 0 {
+		// No arguments: reset game
+		resetGame()
 		return
 	}
 
 	command := args[0]
 
 	switch command {
+	case "start":
+		if len(args) != 4 {
+			fmt.Println("❌ Usage: maze_client start <exploration_name> <x> <y>")
+			fmt.Println("   Example: maze_client start root 1 1")
+			return
+		}
+		handleStartCommand(args[1], args[2], args[3])
+		
 	case "status":
-		handleStatusCommand(args)
+		if len(args) != 2 {
+			fmt.Println("❌ Usage: maze_client status <exploration_name>")
+			fmt.Println("   Example: maze_client status root")
+			return
+		}
+		handleStatusCommand(args[1])
+		
 	case "move":
-		handleMoveCommand(args)
-	case "tree":
-		handleTreeCommand()
+		if len(args) != 4 {
+			fmt.Println("❌ Usage: maze_client move <exploration_name> <x> <y>")
+			fmt.Println("   Example: maze_client move root 2 1")
+			return
+		}
+		handleMoveCommand(args[1], args[2], args[3])
+		
 	case "render":
 		handleRenderCommand()
-	case "help":
-		showHelp()
-	case "quit", "exit":
-		fmt.Println("👋 Goodbye!")
-		os.Exit(0)
+		
+	case "tree":
+		handleTreeCommand()
+		
 	default:
-		fmt.Printf("❌ Unknown command: %s. Type 'help' for available commands.\n", command)
+		showUsage()
 	}
 }
 
-func handleStatusCommand(args []string) {
-	if len(args) == 2 {
-		// Single argument: could be exploration name or invalid
-		explorationName := args[1]
-		
-		// Try to call exploration-status API first
-		url := fmt.Sprintf("%s/exploration-status?name=%s", ServerURL, explorationName)
-		resp, err := http.Get(url)
-		if err != nil {
-			fmt.Printf("❌ Error connecting to server: %v\n", err)
-			return
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode == 404 {
-			fmt.Printf("❌ Exploration '%s' not found. Use 'tree' to see available explorations.\n", explorationName)
-			return
-		} else if resp.StatusCode != 200 {
-			fmt.Printf("❌ Server error: %s\n", resp.Status)
-			return
-		}
-
-		var status MazeStatusResponse
-		if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
-			fmt.Printf("❌ Error parsing response: %v\n", err)
-			return
-		}
-
-		fmt.Printf("🔍 Exploration '%s' current status:\n", explorationName)
-		displayMazeStatus(status, -1, -1) // -1, -1 indicates exploration query
+func resetGame() {
+	fmt.Printf("🔄 Resetting game on %s...\n", ServerURL)
+	
+	resp, err := http.Post(fmt.Sprintf("%s/reset", ServerURL), "application/json", strings.NewReader("{}"))
+	if err != nil {
+		fmt.Printf("❌ Error connecting to server: %v\n", err)
+		fmt.Println("💡 Make sure server is running and accessible")
 		return
-		
-	} else if len(args) == 3 {
-		// Two arguments: coordinates query
-		x, err1 := strconv.Atoi(args[1])
-		y, err2 := strconv.Atoi(args[2])
+	}
+	defer resp.Body.Close()
 
-		if err1 != nil || err2 != nil {
-			fmt.Println("❌ Invalid coordinates. Use integers.")
-			return
-		}
-
-		// Call maze-status API
-		queryMazeStatus(x, y)
+	if resp.StatusCode != 200 {
+		fmt.Printf("❌ Server error: %s\n", resp.Status)
 		return
-		
+	}
+
+	fmt.Println("✅ Game reset successfully")
+	fmt.Println("💡 Start a new exploration with: maze_client start root 1 1")
+}
+
+func handleStartCommand(name, xStr, yStr string) {
+	x, err1 := strconv.Atoi(xStr)
+	y, err2 := strconv.Atoi(yStr)
+
+	if err1 != nil || err2 != nil {
+		fmt.Println("❌ Invalid coordinates. Use integers.")
+		return
+	}
+
+	fmt.Printf("🚀 Starting exploration '%s' at (%d, %d)...\n", name, x, y)
+	
+	moveReq := MoveRequest{
+		ExplorationName: name,
+		NextPosition:    Position{x, y},
+	}
+
+	jsonData, err := json.Marshal(moveReq)
+	if err != nil {
+		fmt.Printf("❌ Error creating request: %v\n", err)
+		return
+	}
+
+	resp, err := http.Post(fmt.Sprintf("%s/move", ServerURL), "application/json", bytes.NewBuffer(jsonData))
+	if err != nil {
+		fmt.Printf("❌ Error connecting to server: %v\n", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	var moveResp MoveResponse
+	if err := json.NewDecoder(resp.Body).Decode(&moveResp); err != nil {
+		fmt.Printf("❌ Error parsing response: %v\n", err)
+		return
+	}
+
+	if moveResp.Success {
+		fmt.Printf("✅ %s\n", moveResp.Message)
+		fmt.Printf("💡 Check status with: maze_client status %s\n", name)
 	} else {
-		fmt.Println("❌ Usage:")
-		fmt.Println("   status <exploration_name>  - Check exploration's current position")
-		fmt.Println("   status <x> <y>            - Check specific coordinates")
-		fmt.Println("💡 Use 'tree' to see available explorations")
-		return
+		fmt.Printf("❌ Start failed: %s\n", moveResp.Message)
 	}
 }
 
-func queryMazeStatus(x, y int) {
-	url := fmt.Sprintf("%s/maze-status?x=%d&y=%d", ServerURL, x, y)
+func showUsage() {
+	fmt.Println("🎮 Maze Game Client")
+	fmt.Println("==================")
+	fmt.Println()
+	fmt.Println("Commands:")
+	fmt.Println("  maze_client                           - Reset game (clear all explorations)")
+	fmt.Println("  maze_client start <name> <x> <y>      - Start new exploration")
+	fmt.Println("  maze_client status <name>             - Check exploration status")
+	fmt.Println("  maze_client move <name> <x> <y>       - Move exploration")
+	fmt.Println("  maze_client render                    - Generate maze image")
+	fmt.Println("  maze_client tree                      - Show exploration tree")
+	fmt.Println()
+	fmt.Println("Examples:")
+	fmt.Println("  maze_client start root 1 1")
+	fmt.Println("  maze_client status root")
+	fmt.Println("  maze_client move root 2 1")
+	fmt.Println()
+}
+
+func handleStatusCommand(explorationName string) {
+	fmt.Printf("🔍 Checking status of exploration '%s'...\n", explorationName)
+	
+	url := fmt.Sprintf("%s/exploration-status?name=%s", ServerURL, explorationName)
 	resp, err := http.Get(url)
 	if err != nil {
 		fmt.Printf("❌ Error connecting to server: %v\n", err)
@@ -208,7 +211,11 @@ func queryMazeStatus(x, y int) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
+	if resp.StatusCode == 404 {
+		fmt.Printf("❌ Exploration '%s' not found\n", explorationName)
+		fmt.Println("💡 Use: maze_client tree (to see all explorations)")
+		return
+	} else if resp.StatusCode != 200 {
 		fmt.Printf("❌ Server error: %s\n", resp.Status)
 		return
 	}
@@ -219,11 +226,12 @@ func queryMazeStatus(x, y int) {
 		return
 	}
 
-	fmt.Printf("📍 Position (%d, %d):\n", x, y)
-	displayMazeStatus(status, x, y)
+	fmt.Printf("📍 Exploration '%s' status:\n", explorationName)
+	displayMazeStatus(status)
 }
 
-func displayMazeStatus(status MazeStatusResponse, x, y int) {
+
+func displayMazeStatus(status MazeStatusResponse) {
 	fmt.Printf("  🔍 Explored: %v\n", status.IsExplored)
 	fmt.Printf("  🛤️  Junction: %v\n", status.IsJunction)
 	fmt.Printf("  🎯 Goal: %v\n", status.IsGoal)
@@ -231,50 +239,27 @@ func displayMazeStatus(status MazeStatusResponse, x, y int) {
 	
 	if len(status.AvailableDirections) == 0 {
 		fmt.Printf("  ➡️  Available moves: None (blocked/wall)\n")
-		if x == 0 && y == 0 {
-			fmt.Printf("  💡 Hint: Start position is (1, 1). Try: status 1 1\n")
-		}
 	} else {
 		fmt.Printf("  ➡️  Available moves (%d):\n", len(status.AvailableDirections))
-		
-		if x == -1 && y == -1 {
-			// Exploration query - don't show coordinates since we don't know current position
-			for i, dir := range status.AvailableDirections {
-				dirName := getDirectionName(dir)
-				fmt.Printf("    %d. %s\n", i+1, dirName)
-			}
-		} else {
-			// Coordinate query - show target coordinates
-			for i, dir := range status.AvailableDirections {
-				dirName := getDirectionName(dir)
-				targetX := x + dir.X
-				targetY := y + dir.Y
-				fmt.Printf("    %d. %s to (%d, %d)\n", i+1, dirName, targetX, targetY)
-			}
+		for i, dir := range status.AvailableDirections {
+			dirName := getDirectionName(dir)
+			fmt.Printf("    %d. %s\n", i+1, dirName)
 		}
-		
-		fmt.Printf("  💡 Use: move <exploration_name> <target_x> <target_y>\n")
-		if x == 1 && y == 1 && !status.IsExplored {
-			fmt.Printf("  🚀 Quick start: move root 1 1\n")
-		}
+		fmt.Printf("  💡 Use: maze_client move <exploration_name> <target_x> <target_y>\n")
 	}
 }
 
-func handleMoveCommand(args []string) {
-	if len(args) != 4 {
-		fmt.Println("❌ Usage: move <exploration_name> <x> <y>")
-		return
-	}
-
-	explorationName := args[1]
-	x, err1 := strconv.Atoi(args[2])
-	y, err2 := strconv.Atoi(args[3])
+func handleMoveCommand(explorationName, xStr, yStr string) {
+	x, err1 := strconv.Atoi(xStr)
+	y, err2 := strconv.Atoi(yStr)
 
 	if err1 != nil || err2 != nil {
 		fmt.Println("❌ Invalid coordinates. Use integers.")
 		return
 	}
 
+	fmt.Printf("🚀 Moving exploration '%s' to (%d, %d)...\n", explorationName, x, y)
+	
 	moveReq := MoveRequest{
 		ExplorationName: explorationName,
 		NextPosition:    Position{x, y},
@@ -427,36 +412,3 @@ func handleRenderCommand() {
 	fmt.Printf("   📂 Size: %d bytes\n", len(pngContent))
 }
 
-func showHelp() {
-	fmt.Println("\n📖 Command Help:")
-	fmt.Println("==================")
-	fmt.Println("🔍 status <exploration_name>")
-	fmt.Println("   Check an exploration's current position and available moves")
-	fmt.Println("   Example: status root")
-	fmt.Println()
-	fmt.Println("🔍 status <x> <y>")
-	fmt.Println("   Get information about a specific maze position")
-	fmt.Println("   Example: status 5 10")
-	fmt.Println()
-	fmt.Println("🚀 move <exploration_name> <x> <y>")
-	fmt.Println("   Move an exploration to a new position")
-	fmt.Println("   Creates new exploration if it doesn't exist")
-	fmt.Println("   Example: move root 2 1")
-	fmt.Println()
-	fmt.Println("🌳 tree")
-	fmt.Println("   Display the complete exploration tree")
-	fmt.Println("   Shows all explorations, their status, and relationships")
-	fmt.Println()
-	fmt.Println("🖼️ render")
-	fmt.Println("   Generate and save a PNG image of current maze state")
-	fmt.Println("   Image is saved locally as 'maze.png'")
-	fmt.Println("   Example: render")
-	fmt.Println()
-	fmt.Println("💡 Tips:")
-	fmt.Println("   - Start by creating root exploration: move root 1 1")
-	fmt.Println("   - Check exploration status with: status root")
-	fmt.Println("   - Use 'tree' to see all explorations")
-	fmt.Println("   - At junctions, create multiple explorations to branch")
-	fmt.Println("   - Use 'render' to save visualization snapshots")
-	fmt.Println()
-}
