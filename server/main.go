@@ -545,15 +545,16 @@ func generateMazePNG() ([]byte, error) {
 	// Create image with title area
 	img := image.NewRGBA(image.Rect(0, 0, totalWidth, totalHeight))
 
-	// Colors
+	// Colors (matching Python version exactly)
 	colors := map[string]color.RGBA{
-		"background": {255, 255, 255, 255}, // White
-		"wall":       {224, 224, 224, 255}, // Light gray
-		"path":       {250, 250, 250, 255}, // Very light gray
-		"start":      {76, 175, 80, 255},   // Green
-		"goal":       {244, 67, 54, 255},   // Red
-		"winner":     {255, 109, 0, 255},   // Gold
-		"dead":       {158, 158, 158, 255}, // Gray
+		"background": {255, 255, 255, 255}, // #FFFFFF - White background
+		"maze_bg":    {250, 250, 250, 255}, // #FAFAFA - Maze background  
+		"wall":       {224, 224, 224, 255}, // #E0E0E0 - Light gray walls
+		"path":       {250, 250, 250, 255}, // #FAFAFA - Path (same as maze_bg)
+		"start":      {76, 175, 80, 255},   // #4CAF50 - Green start
+		"goal":       {244, 67, 54, 255},   // #F44336 - Red goal
+		"winner":     {255, 109, 0, 255},   // #FF6D00 - Gold winner
+		"dead":       {158, 158, 158, 255}, // #9E9E9E - Gray dead
 	}
 
 	segmentColors := []color.RGBA{
@@ -579,31 +580,44 @@ func generateMazePNG() ([]byte, error) {
 	// Draw title content
 	drawTitle(img, totalWidth, titleHeight)
 
+	// Draw maze background first (matching Python version)
+	for y := titleHeight; y < totalHeight; y++ {
+		for x := 0; x < totalWidth; x++ {
+			img.Set(x, y, colors["maze_bg"])
+		}
+	}
+	
 	// Draw maze structure (offset by title height)
 	for y := 0; y < game.Height; y++ {
 		for x := 0; x < game.Width; x++ {
 			cellType := game.Maze[y][x]
-			var cellColor color.RGBA
-
-			switch cellType {
-			case WALL:
-				cellColor = colors["wall"]
-			case PATH:
-				cellColor = colors["path"]
-			case START:
-				cellColor = colors["start"]
-			case GOAL:
-				cellColor = colors["goal"]
-			}
-
-			// Fill cell (offset by title height)
-			for py := y*cellSize + titleHeight; py < (y+1)*cellSize+titleHeight; py++ {
-				for px := x * cellSize; px < (x+1)*cellSize; px++ {
-					img.Set(px, py, cellColor)
+			
+			// Only draw walls and special cells, paths use maze_bg
+			if cellType == WALL {
+				// Fill wall cell
+				for py := y*cellSize + titleHeight; py < (y+1)*cellSize+titleHeight; py++ {
+					for px := x * cellSize; px < (x+1)*cellSize; px++ {
+						img.Set(px, py, colors["wall"])
+					}
 				}
 			}
 		}
 	}
+	
+	// Draw start and goal as circles (matching Python version)
+	start := game.Start
+	startCenterX := start.X*cellSize + cellSize/2
+	startCenterY := start.Y*cellSize + cellSize/2 + titleHeight
+	startRadius := int(float64(cellSize) * 0.35) // radius 0.35 like Python
+	drawCircleWithBorder(img, startCenterX, startCenterY, startRadius, 
+		colors["start"], color.RGBA{255, 255, 255, 255}, 2)
+	
+	goal := game.Goal
+	goalCenterX := goal.X*cellSize + cellSize/2
+	goalCenterY := goal.Y*cellSize + cellSize/2 + titleHeight
+	goalRadius := int(float64(cellSize) * 0.35) // radius 0.35 like Python
+	drawCircleWithBorder(img, goalCenterX, goalCenterY, goalRadius, 
+		colors["goal"], color.RGBA{255, 255, 255, 255}, 2)
 
 	// Draw exploration paths
 	for _, exp := range game.Explorations {
@@ -611,14 +625,20 @@ func generateMazePNG() ([]byte, error) {
 			continue
 		}
 
-		// Determine color
+		// Determine color and width (matching Python version logic)
 		var pathColor color.RGBA
+		var lineWidth int
+		
 		if exp.FoundGoal {
+			// Winner gets gold color and thick line (3.0 -> 3px)
 			pathColor = colors["winner"]
+			lineWidth = 3
 		} else if exp.IsDead {
+			// Dead gets gray color and thin line (1.5 -> 2px)
 			pathColor = colors["dead"]
+			lineWidth = 2
 		} else {
-			// Extract numeric ID for consistent coloring
+			// Normal segments get assigned colors and medium line (2.0 -> 2px)
 			idStr := strings.TrimPrefix(exp.ID, "s")
 			if idStr == "" || exp.ID == "root" {
 				idStr = "0"
@@ -628,9 +648,10 @@ func generateMazePNG() ([]byte, error) {
 			} else {
 				pathColor = segmentColors[0]
 			}
+			lineWidth = 2
 		}
 
-		// Draw path (simple line drawing) - offset by title height
+		// Draw path with proper line caps (matching Python's round caps)
 		for i := 1; i < len(exp.PathPositions); i++ {
 			prev := exp.PathPositions[i-1]
 			curr := exp.PathPositions[i]
@@ -640,18 +661,32 @@ func generateMazePNG() ([]byte, error) {
 			x2 := curr.X*cellSize + cellSize/2
 			y2 := curr.Y*cellSize + cellSize/2 + titleHeight
 
-			drawLine(img, x1, y1, x2, y2, pathColor, 2)
+			// Use round line caps and joins like Python version
+			drawLineRound(img, x1, y1, x2, y2, pathColor, lineWidth)
 		}
 
-		// Draw robot marker for active explorations
+		// Draw robot marker for active explorations (matching Python version)
 		if exp.IsActive {
 			pos := exp.CurrentPosition
-			centerX := pos.X*cellSize + cellSize/2
-			centerY := pos.Y*cellSize + cellSize/2 + titleHeight
-			size := cellSize / 4
+			// Skip if at start/goal positions (already drawn with special markers)
+			if !((pos.X == game.Start.X && pos.Y == game.Start.Y) ||
+				(pos.X == game.Goal.X && pos.Y == game.Goal.Y)) {
+				
+				centerX := pos.X*cellSize + cellSize/2
+				centerY := pos.Y*cellSize + cellSize/2 + titleHeight
+				
+				// Match Python version: radius=0.3 of cell, white border, inner highlight
+				outerSize := int(float64(cellSize) * 0.3)  // radius 0.3
+				innerSize := int(float64(cellSize) * 0.15) // radius 0.15
 
-			// Draw diamond shape
-			drawDiamond(img, centerX, centerY, size, pathColor)
+				// Draw outer diamond with white border (3px border)
+				drawDiamondWithBorder(img, centerX, centerY, outerSize, pathColor, 
+					color.RGBA{255, 255, 255, 255}, 3)
+				
+				// Draw inner white highlight
+				drawDiamond(img, centerX, centerY, innerSize, 
+					color.RGBA{255, 255, 255, 160}) // Semi-transparent white
+			}
 		}
 	}
 
@@ -668,97 +703,119 @@ func drawTitle(img *image.RGBA, width, height int) {
 	// Get current statistics
 	stats := game.getExplorationTree()
 	
-	// Colors
-	bgColor := color.RGBA{248, 249, 250, 255}     // Light background
+	// Colors matching Python version exactly
+	bgColor := color.RGBA{255, 255, 255, 255}     // White background
 	textColor := color.RGBA{66, 66, 66, 255}     // Dark gray text
-	activeColor := color.RGBA{33, 150, 243, 255} // Blue for active
-	goalColor := color.RGBA{76, 175, 80, 255}    // Green for goal
-	deadColor := color.RGBA{158, 158, 158, 255}  // Gray for dead
+	winnerColor := color.RGBA{255, 109, 0, 255}  // Gold for winner
 	
-	// Clear title area with light background
+	// Clear title area with white background
 	for y := 0; y < height; y++ {
 		for x := 0; x < width; x++ {
 			img.Set(x, y, bgColor)
 		}
 	}
 	
-	// Draw title text
+	// Draw title text with proper font rendering
 	if stats.GlobalStats.GoalFound {
-		titleText := "MAZE SOLVED!"
-		drawPixelText(img, titleText, 20, 10, goalColor)
+		// Match Python version title when goal found
+		titleText := "PANTHEON MAZE SOLVED!"
+		drawBetterText(img, titleText, width/2, 15, winnerColor, true) // Centered, bold
 		
-		subtitleText := fmt.Sprintf("Total: %d Active: %d Visited: %d", 
-			stats.GlobalStats.TotalExplorations,
-			stats.GlobalStats.ActiveExplorations,
-			stats.GlobalStats.VisitedPositions)
-		drawPixelText(img, subtitleText, 20, 20, textColor)
+		subtitleText := fmt.Sprintf("Multi-Branch BFS Pathfinding | Winner: root | Segments: %d", 
+			stats.GlobalStats.TotalExplorations)
+		drawBetterText(img, subtitleText, width/2, 35, textColor, false) // Centered, normal
 	} else {
-		titleText := "MAZE EXPLORATION"
-		drawPixelText(img, titleText, 20, 10, textColor)
+		// Match Python version title during exploration
+		titleText := "Multi-Branch BFS Pathfinding"
+		drawBetterText(img, titleText, width/2, 15, textColor, true) // Centered, bold
 		
-		subtitleText := fmt.Sprintf("Total: %d Active: %d Visited: %d", 
-			stats.GlobalStats.TotalExplorations,
+		subtitleText := fmt.Sprintf("Concurrent exploration spawning branches at junctions | Active: %d | Total: %d", 
 			stats.GlobalStats.ActiveExplorations,
-			stats.GlobalStats.VisitedPositions)
-		drawPixelText(img, subtitleText, 20, 20, textColor)
-	}
-	
-	// Draw status indicators as colored bars
-	barHeight := 6
-	barY := height - 20
-	
-	// Active explorations (blue bars)
-	activeWidth := min(stats.GlobalStats.ActiveExplorations*10, width-100)
-	for y := barY; y < barY+barHeight; y++ {
-		for x := 20; x < 20+activeWidth; x++ {
-			img.Set(x, y, activeColor)
-		}
-	}
-	
-	// Total explorations count (smaller gray bars above active)
-	totalWidth := min(stats.GlobalStats.TotalExplorations*2, width-100)
-	for y := barY-10; y < barY-6; y++ {
-		for x := 20; x < 20+totalWidth; x++ {
-			img.Set(x, y, deadColor)
-		}
-	}
-	
-	// Goal indicator (big green square if found)
-	if stats.GlobalStats.GoalFound {
-		goalSize := 12
-		goalX := width - 30
-		goalY := 10
-		for y := goalY; y < goalY+goalSize; y++ {
-			for x := goalX; x < goalX+goalSize; x++ {
-				img.Set(x, y, goalColor)
-			}
-		}
-		// White checkmark inside
-		for i := 0; i < 6; i++ {
-			img.Set(goalX+3+i, goalY+6+i/2, color.RGBA{255, 255, 255, 255})
-			if i < 3 {
-				img.Set(goalX+3-i, goalY+6+i, color.RGBA{255, 255, 255, 255})
-			}
-		}
+			stats.GlobalStats.TotalExplorations)
+		drawBetterText(img, subtitleText, width/2, 35, textColor, false) // Centered, normal
 	}
 }
 
-// Helper function to draw simple pixel text (simplified version)
-func drawPixelText(img *image.RGBA, text string, startX, startY int, textColor color.RGBA) {
-	// This is a very basic pixel font implementation
-	// For now, just draw simple blocks to represent text
+// Helper function to draw better text (centered)
+func drawBetterText(img *image.RGBA, text string, centerX, y int, textColor color.RGBA, bold bool) {
+	// Simple but better text rendering - use ASCII characters only
+	charWidth := 6
+	lineHeight := 1
+	if bold {
+		lineHeight = 2
+	}
+	
+	// Calculate text width for centering
+	textWidth := len(text) * charWidth
+	startX := centerX - textWidth/2
+	
+	// Basic bitmap font for capital letters and common characters
 	for i, char := range text {
-		if char == ' ' {
-			continue
-		}
-		
-		// Draw a simple block for each character
-		for dy := 0; dy < 5; dy++ {
-			for dx := 0; dx < 3; dx++ {
-				x := startX + i*4 + dx
-				y := startY + dy
-				if x < img.Bounds().Max.X && y < img.Bounds().Max.Y {
-					img.Set(x, y, textColor)
+		charX := startX + i*charWidth
+		drawChar(img, char, charX, y, textColor, lineHeight)
+	}
+}
+
+// Helper function to draw individual characters
+func drawChar(img *image.RGBA, char rune, startX, startY int, color color.RGBA, thickness int) {
+	// Very basic character patterns (5x7 bitmap)
+	patterns := map[rune][]string{
+		'A': {"  *  ", " *** ", "*   *", "*****", "*   *", "*   *", "     "},
+		'B': {"**** ", "*   *", "**** ", "**** ", "*   *", "**** ", "     "},
+		'C': {" *** ", "*   *", "*    ", "*    ", "*   *", " *** ", "     "},
+		'D': {"**** ", "*   *", "*   *", "*   *", "*   *", "**** ", "     "},
+		'E': {"*****", "*    ", "**** ", "**** ", "*    ", "*****", "     "},
+		'F': {"*****", "*    ", "**** ", "**** ", "*    ", "*    ", "     "},
+		'G': {" *** ", "*   *", "*    ", "* ***", "*   *", " *** ", "     "},
+		'H': {"*   *", "*   *", "*****", "*****", "*   *", "*   *", "     "},
+		'I': {"*****", "  *  ", "  *  ", "  *  ", "  *  ", "*****", "     "},
+		'L': {"*    ", "*    ", "*    ", "*    ", "*    ", "*****", "     "},
+		'M': {"*   *", "** **", "* * *", "*   *", "*   *", "*   *", "     "},
+		'N': {"*   *", "**  *", "* * *", "*  **", "*   *", "*   *", "     "},
+		'O': {" *** ", "*   *", "*   *", "*   *", "*   *", " *** ", "     "},
+		'P': {"**** ", "*   *", "**** ", "*    ", "*    ", "*    ", "     "},
+		'R': {"**** ", "*   *", "**** ", "* *  ", "*  * ", "*   *", "     "},
+		'S': {" *** ", "*    ", " *** ", "    *", "    *", " *** ", "     "},
+		'T': {"*****", "  *  ", "  *  ", "  *  ", "  *  ", "  *  ", "     "},
+		'U': {"*   *", "*   *", "*   *", "*   *", "*   *", " *** ", "     "},
+		'V': {"*   *", "*   *", "*   *", "*   *", " * * ", "  *  ", "     "},
+		'Z': {"*****", "   * ", "  *  ", " *   ", "*    ", "*****", "     "},
+		' ': {"     ", "     ", "     ", "     ", "     ", "     ", "     "},
+		'-': {"     ", "     ", "*****", "     ", "     ", "     ", "     "},
+		'|': {"  *  ", "  *  ", "  *  ", "  *  ", "  *  ", "  *  ", "     "},
+		':': {"     ", "  *  ", "     ", "     ", "  *  ", "     ", "     "},
+		'!': {"  *  ", "  *  ", "  *  ", "  *  ", "     ", "  *  ", "     "},
+		'0': {" *** ", "*   *", "*   *", "*   *", "*   *", " *** ", "     "},
+		'1': {"  *  ", " **  ", "  *  ", "  *  ", "  *  ", "*****", "     "},
+		'2': {" *** ", "*   *", "   * ", "  *  ", " *   ", "*****", "     "},
+		'3': {" *** ", "*   *", "  ** ", "   * ", "*   *", " *** ", "     "},
+		'4': {"   * ", "  ** ", " * * ", "*****", "   * ", "   * ", "     "},
+		'5': {"*****", "*    ", "**** ", "    *", "*   *", " *** ", "     "},
+		'6': {" *** ", "*    ", "**** ", "*   *", "*   *", " *** ", "     "},
+		'7': {"*****", "    *", "   * ", "  *  ", " *   ", "*    ", "     "},
+		'8': {" *** ", "*   *", " *** ", " *** ", "*   *", " *** ", "     "},
+		'9': {" *** ", "*   *", " ****", "    *", "    *", " *** ", "     "},
+	}
+	
+	// Default pattern for unknown characters
+	pattern, exists := patterns[char]
+	if !exists {
+		pattern = []string{"*****", "*   *", "*   *", "*   *", "*   *", "*****", "     "} // Rectangle
+	}
+	
+	// Draw the character pattern
+	for y, line := range pattern {
+		for x, pixel := range line {
+			if pixel == '*' {
+				// Draw with thickness
+				for ty := 0; ty < thickness; ty++ {
+					for tx := 0; tx < thickness; tx++ {
+						px := startX + x + tx
+						py := startY + y + ty
+						if px >= 0 && py >= 0 && px < img.Bounds().Max.X && py < img.Bounds().Max.Y {
+							img.Set(px, py, color)
+						}
+					}
 				}
 			}
 		}
@@ -772,7 +829,7 @@ func min(a, b int) int {
 	return b
 }
 
-// Helper function to draw line
+// Helper function to draw line (basic version)
 func drawLine(img *image.RGBA, x0, y0, x1, y1 int, color color.RGBA, width int) {
 	dx := abs(x1 - x0)
 	dy := abs(y1 - y0)
@@ -811,7 +868,75 @@ func drawLine(img *image.RGBA, x0, y0, x1, y1 int, color color.RGBA, width int) 
 	}
 }
 
-// Helper function to draw diamond
+// Helper function to draw line with round caps (matching Python version)
+func drawLineRound(img *image.RGBA, x0, y0, x1, y1 int, color color.RGBA, width int) {
+	// Draw the main line
+	drawLine(img, x0, y0, x1, y1, color, width)
+	
+	// Add round caps at both ends
+	radius := width / 2
+	if radius < 1 {
+		radius = 1
+	}
+	
+	// Draw round cap at start
+	for dy := -radius; dy <= radius; dy++ {
+		for dx := -radius; dx <= radius; dx++ {
+			if dx*dx+dy*dy <= radius*radius {
+				x := x0 + dx
+				y := y0 + dy
+				if x >= 0 && y >= 0 && x < img.Bounds().Max.X && y < img.Bounds().Max.Y {
+					img.Set(x, y, color)
+				}
+			}
+		}
+	}
+	
+	// Draw round cap at end
+	for dy := -radius; dy <= radius; dy++ {
+		for dx := -radius; dx <= radius; dx++ {
+			if dx*dx+dy*dy <= radius*radius {
+				x := x1 + dx
+				y := y1 + dy
+				if x >= 0 && y >= 0 && x < img.Bounds().Max.X && y < img.Bounds().Max.Y {
+					img.Set(x, y, color)
+				}
+			}
+		}
+	}
+}
+
+// Helper function to draw circle with border (matching Python version)
+func drawCircleWithBorder(img *image.RGBA, centerX, centerY, radius int, fillColor, borderColor color.RGBA, borderWidth int) {
+	// Draw border first (larger circle)
+	outerRadius := radius + borderWidth
+	for dy := -outerRadius; dy <= outerRadius; dy++ {
+		for dx := -outerRadius; dx <= outerRadius; dx++ {
+			if dx*dx+dy*dy <= outerRadius*outerRadius {
+				x := centerX + dx
+				y := centerY + dy
+				if x >= 0 && y >= 0 && x < img.Bounds().Max.X && y < img.Bounds().Max.Y {
+					img.Set(x, y, borderColor)
+				}
+			}
+		}
+	}
+	
+	// Draw fill (inner circle)
+	for dy := -radius; dy <= radius; dy++ {
+		for dx := -radius; dx <= radius; dx++ {
+			if dx*dx+dy*dy <= radius*radius {
+				x := centerX + dx
+				y := centerY + dy
+				if x >= 0 && y >= 0 && x < img.Bounds().Max.X && y < img.Bounds().Max.Y {
+					img.Set(x, y, fillColor)
+				}
+			}
+		}
+	}
+}
+
+// Helper function to draw diamond (basic version)
 func drawDiamond(img *image.RGBA, centerX, centerY, size int, color color.RGBA) {
 	for dy := -size; dy <= size; dy++ {
 		width := size - abs(dy)
@@ -820,6 +945,33 @@ func drawDiamond(img *image.RGBA, centerX, centerY, size int, color color.RGBA) 
 			y := centerY + dy
 			if x >= 0 && y >= 0 && x < img.Bounds().Max.X && y < img.Bounds().Max.Y {
 				img.Set(x, y, color)
+			}
+		}
+	}
+}
+
+// Helper function to draw diamond with border (matching Python version)
+func drawDiamondWithBorder(img *image.RGBA, centerX, centerY, size int, fillColor, borderColor color.RGBA, borderWidth int) {
+	// Draw border first (larger diamond)
+	for dy := -(size + borderWidth); dy <= (size + borderWidth); dy++ {
+		width := (size + borderWidth) - abs(dy)
+		for dx := -width; dx <= width; dx++ {
+			x := centerX + dx
+			y := centerY + dy
+			if x >= 0 && y >= 0 && x < img.Bounds().Max.X && y < img.Bounds().Max.Y {
+				img.Set(x, y, borderColor)
+			}
+		}
+	}
+	
+	// Draw fill (inner diamond)
+	for dy := -size; dy <= size; dy++ {
+		width := size - abs(dy)
+		for dx := -width; dx <= width; dx++ {
+			x := centerX + dx
+			y := centerY + dy
+			if x >= 0 && y >= 0 && x < img.Bounds().Max.X && y < img.Bounds().Max.Y {
+				img.Set(x, y, fillColor)
 			}
 		}
 	}
