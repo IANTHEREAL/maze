@@ -9,6 +9,7 @@ import random
 import time
 import os
 import shutil
+import json
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple
@@ -54,6 +55,15 @@ class Position:
     def __add__(self, direction: Direction):
         dx, dy = direction.value
         return Position(self.x + dx, self.y + dy)
+    
+    def to_dict(self) -> Dict:
+        """Serialize Position to dictionary"""
+        return {"x": self.x, "y": self.y}
+    
+    @classmethod
+    def from_dict(cls, data: Dict) -> 'Position':
+        """Deserialize Position from dictionary"""
+        return cls(data["x"], data["y"])
 
 
 @dataclass
@@ -83,6 +93,41 @@ class PathSegment:
             self.path_positions = [self.start_position]
         if self.current_position not in self.path_positions:
             self.path_positions.append(self.current_position)
+    
+    def to_dict(self) -> Dict:
+        """Serialize PathSegment to dictionary"""
+        return {
+            "id": self.id,
+            "start_position": self.start_position.to_dict(),
+            "current_position": self.current_position.to_dict(),
+            "path_positions": [pos.to_dict() for pos in self.path_positions],
+            "parent_id": self.parent_id,
+            "child_ids": self.child_ids.copy(),
+            "is_active": self.is_active,
+            "is_complete": self.is_complete,
+            "is_dead": self.is_dead,
+            "found_goal": self.found_goal,
+            "fixed_color_index": self.fixed_color_index,
+            "generation": self.generation
+        }
+    
+    @classmethod
+    def from_dict(cls, data: Dict) -> 'PathSegment':
+        """Deserialize PathSegment from dictionary"""
+        return cls(
+            id=data["id"],
+            start_position=Position.from_dict(data["start_position"]),
+            current_position=Position.from_dict(data["current_position"]),
+            path_positions=[Position.from_dict(pos) for pos in data["path_positions"]],
+            parent_id=data["parent_id"],
+            child_ids=data["child_ids"].copy(),
+            is_active=data["is_active"],
+            is_complete=data["is_complete"],
+            is_dead=data["is_dead"],
+            found_goal=data["found_goal"],
+            fixed_color_index=data["fixed_color_index"],
+            generation=data["generation"]
+        )
 
 
 class MazeGenerator:
@@ -387,6 +432,65 @@ class PathSegmentEngine:
             print(f"🏆 Switched to winner-only mode - showing only winning path (segment: {self.winning_segment})")
         else:
             print("⚠️  Cannot enable winner-only mode - no winner found yet")
+    
+    def save_tree_to_json(self, filename: str = "pathsegment_tree.json"):
+        """Save the complete PathSegment tree to JSON file"""
+        tree_data = {
+            "metadata": {
+                "width": self.width,
+                "height": self.height,
+                "start": self.start.to_dict(),
+                "goal": self.goal.to_dict(),
+                "goal_found": self.goal_found,
+                "winning_segment": self.winning_segment,
+                "show_only_winner": self.show_only_winner,
+                "total_steps": self.total_steps,
+                "max_concurrent_segments": self.max_concurrent_segments,
+                "next_id": self.next_id
+            },
+            "maze": self.maze.tolist(),  # Convert numpy array to list for JSON serialization
+            "segments": {seg_id: segment.to_dict() for seg_id, segment in self.segments.items()},
+            "global_visited_positions": [pos.to_dict() for pos in self.global_visited_positions]
+        }
+        
+        with open(filename, 'w', encoding='utf-8') as f:
+            json.dump(tree_data, f, indent=2, ensure_ascii=False)
+        
+        print(f"💾 PathSegment tree saved to '{filename}'")
+        print(f"   📊 {len(self.segments)} segments, {len(self.global_visited_positions)} visited positions")
+    
+    def load_tree_from_json(self, filename: str = "pathsegment_tree.json"):
+        """Load PathSegment tree from JSON file"""
+        with open(filename, 'r', encoding='utf-8') as f:
+            tree_data = json.load(f)
+        
+        # Restore metadata
+        metadata = tree_data["metadata"]
+        self.width = metadata["width"]
+        self.height = metadata["height"]
+        self.start = Position.from_dict(metadata["start"])
+        self.goal = Position.from_dict(metadata["goal"])
+        self.goal_found = metadata["goal_found"]
+        self.winning_segment = metadata["winning_segment"]
+        self.show_only_winner = metadata["show_only_winner"]
+        self.total_steps = metadata["total_steps"]
+        self.max_concurrent_segments = metadata["max_concurrent_segments"]
+        self.next_id = metadata["next_id"]
+        
+        # Restore maze
+        self.maze = np.array(tree_data["maze"])
+        
+        # Restore segments
+        self.segments = {}
+        for seg_id, seg_data in tree_data["segments"].items():
+            self.segments[seg_id] = PathSegment.from_dict(seg_data)
+        
+        # Restore global visited positions
+        self.global_visited_positions = {Position.from_dict(pos_data) 
+                                       for pos_data in tree_data["global_visited_positions"]}
+        
+        print(f"📂 PathSegment tree loaded from '{filename}'")
+        print(f"   📊 {len(self.segments)} segments, {len(self.global_visited_positions)} visited positions")
 
 
 class PathSegmentVisualizer:
@@ -776,6 +880,10 @@ def run_pantheon_exploration_with_recording():
         print(f"   🏆 Winner: {stats['winning_segment']}")
         print(f"   📏 Shortest path length: {len(winner.path_positions)}")
         print(f"   🧬 Winner generation: {winner.generation}")
+    
+    # Save PathSegment tree to JSON
+    print(f"\n💾 Saving PathSegment tree structure...")
+    engine.save_tree_to_json("pathsegment_tree.json")
     
     return visualizer.frame_count > 0
 
