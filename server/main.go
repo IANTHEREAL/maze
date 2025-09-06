@@ -20,6 +20,11 @@ type Direction struct {
 	X, Y int
 }
 
+type AvailableMove struct {
+	Direction    Direction `json:"direction"`
+	TargetPosition Position `json:"target_position"`
+}
+
 var (
 	UP    = Direction{0, -1}
 	DOWN  = Direction{0, 1}
@@ -108,11 +113,12 @@ func NewGame(width, height int, seed int64) *Game {
 }
 
 type MazeStatusResponse struct {
-	IsExplored           bool        `json:"is_explored"`
-	IsJunction           bool        `json:"is_junction"`
-	AvailableDirections  []Direction `json:"available_directions"`
-	IsGoal               bool        `json:"is_goal"`
-	GoalReachedByAny     bool        `json:"goal_reached_by_any"`
+	IsExplored           bool            `json:"is_explored"`
+	IsJunction           bool            `json:"is_junction"`
+	AvailableDirections  []Direction     `json:"available_directions"`
+	AvailableMoves       []AvailableMove `json:"available_moves"`
+	IsGoal               bool            `json:"is_goal"`
+	GoalReachedByAny     bool            `json:"goal_reached_by_any"`
 }
 
 type MoveRequest struct {
@@ -151,7 +157,6 @@ func main() {
 	http.HandleFunc("/move", handleMove)
 	http.HandleFunc("/exploration-tree", handleExplorationTree)
 	http.HandleFunc("/reset", handleReset)
-	http.HandleFunc("/web", handleWebView)
 	http.HandleFunc("/render", handleRender)
 
 	addr := *host + ":" + *port
@@ -381,10 +386,23 @@ func (g *Game) isAtGoal(pos Position) bool {
 }
 
 func (g *Game) getMazeStatus(pos Position) MazeStatusResponse {
+	validDirections := g.getValidDirections(pos)
+	
+	// Create AvailableMoves with target positions
+	availableMoves := make([]AvailableMove, 0, len(validDirections))
+	for _, dir := range validDirections {
+		targetPos := pos.Add(dir)
+		availableMoves = append(availableMoves, AvailableMove{
+			Direction:      dir,
+			TargetPosition: targetPos,
+		})
+	}
+	
 	return MazeStatusResponse{
 		IsExplored:          g.GlobalVisitedPositions[pos],
-		IsJunction:          len(g.getValidDirections(pos)) > 1,
-		AvailableDirections: g.getValidDirections(pos),
+		IsJunction:          len(validDirections) > 1,
+		AvailableDirections: validDirections,
+		AvailableMoves:      availableMoves,
 		IsGoal:              g.isAtGoal(pos),
 		GoalReachedByAny:    g.GoalFound,
 	}
@@ -494,195 +512,6 @@ func (g *Game) getExplorationTree() ExplorationTreeResponse {
 	}
 }
 
-func handleWebView(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "GET" {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	
-	// Write HTML in parts to avoid Go string literal issues
-	fmt.Fprint(w, `<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <title>Maze Explorer</title>
-    <style>
-        body { font-family: monospace; margin: 0; padding: 20px; background: #FFFFFF; }
-        .header { text-align: center; margin-bottom: 20px; }
-        .container { display: flex; justify-content: center; }
-        .canvas-container { background: white; border: 1px solid #ddd; }
-        canvas { display: block; }
-    </style>
-</head>
-<body>
-    <div class="header">
-        <h1>Multi-Branch BFS Pathfinding</h1>
-        <div>Step: <span id="step">0</span> | Active: <span id="active">0</span> | Total: <span id="total">0</span></div>
-    </div>
-    <div class="container">
-        <div class="canvas-container">
-            <canvas id="mazeCanvas" width="800" height="800"></canvas>
-        </div>
-    </div>
-    <script>`)
-
-	fmt.Fprint(w, `
-        const canvas = document.getElementById('mazeCanvas');
-        const ctx = canvas.getContext('2d');
-        let gameData = null;
-        
-        const COLORS = {
-            background: '#FFFFFF',
-            wall: '#E0E0E0', 
-            path: '#FAFAFA',
-            start: '#4CAF50',
-            goal: '#F44336',
-            segmentColors: ['#2196F3', '#9C27B0', '#FF5722', '#8BC34A', '#00BCD4', '#E91E63'],
-            winnerColor: '#FF6D00',
-            deadColor: '#9E9E9E'
-        };
-        
-        async function fetchGameState() {
-            try {
-                const response = await fetch('/exploration-tree');
-                const data = await response.json();
-                gameData = data;
-                updateDisplay();
-            } catch (error) {
-                console.error('Error:', error);
-            }
-        }
-        
-        function updateDisplay() {
-            if (!gameData) return;
-            document.getElementById('active').textContent = gameData.global_stats.active_explorations;
-            document.getElementById('total').textContent = gameData.global_stats.total_explorations;
-            document.getElementById('step').textContent = Object.keys(gameData.explorations).length;
-            drawMaze();
-        }
-        
-        async function fetchMazeStructure() {
-            const maze = [];
-            for (let y = 0; y < 31; y++) {
-                maze[y] = [];
-                for (let x = 0; x < 31; x++) {
-                    try {
-                        const response = await fetch('/maze-status?x=' + x + '&y=' + y);
-                        const status = await response.json();
-                        let cellType = 'wall';
-                        if (x === 1 && y === 1) cellType = 'start';
-                        else if (status.is_goal) cellType = 'goal';
-                        else if (status.available_directions.length > 0) cellType = 'path';
-                        maze[y][x] = cellType;
-                    } catch (error) {
-                        maze[y][x] = 'wall';
-                    }
-                }
-            }
-            return maze;
-        }
-        
-        let mazeStructure = null;
-        
-        async function drawMaze() {
-            if (!gameData) return;
-            if (!mazeStructure) mazeStructure = await fetchMazeStructure();
-            
-            const cellSize = canvas.width / 31;
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            ctx.fillStyle = COLORS.background;
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-            
-            for (let y = 0; y < 31; y++) {
-                for (let x = 0; x < 31; x++) {
-                    const cellType = mazeStructure[y][x];
-                    let color = COLORS.wall;
-                    if (cellType === 'path') color = COLORS.path;
-                    else if (cellType === 'start') color = COLORS.start;
-                    else if (cellType === 'goal') color = COLORS.goal;
-                    
-                    ctx.fillStyle = color;
-                    ctx.fillRect(x * cellSize, y * cellSize, cellSize, cellSize);
-                    
-                    if (cellType === 'start' || cellType === 'goal') {
-                        ctx.fillStyle = color;
-                        ctx.beginPath();
-                        ctx.arc(x * cellSize + cellSize/2, y * cellSize + cellSize/2, cellSize * 0.35, 0, 2 * Math.PI);
-                        ctx.fill();
-                        ctx.strokeStyle = 'white';
-                        ctx.lineWidth = 2;
-                        ctx.stroke();
-                    }
-                }
-            }
-            
-            Object.entries(gameData.explorations).forEach(([id, exp]) => {
-                drawExploration(exp, cellSize);
-            });
-        }
-        
-        function drawExploration(exp, cellSize) {
-            if (exp.path_positions.length < 2) return;
-            
-            let color = COLORS.segmentColors[0];
-            if (exp.found_goal) color = COLORS.winnerColor;
-            else if (exp.is_dead) color = COLORS.deadColor;
-            else {
-                const colorIndex = parseInt(exp.id.replace('s', '')) % COLORS.segmentColors.length;
-                color = COLORS.segmentColors[colorIndex] || COLORS.segmentColors[0];
-            }
-            
-            ctx.strokeStyle = color;
-            ctx.lineWidth = exp.found_goal ? 3 : 2;
-            ctx.lineCap = 'round';
-            ctx.lineJoin = 'round';
-            ctx.globalAlpha = exp.found_goal ? 1.0 : 0.9;
-            
-            ctx.beginPath();
-            const firstPos = exp.path_positions[0];
-            ctx.moveTo(firstPos.x * cellSize + cellSize/2, firstPos.y * cellSize + cellSize/2);
-            
-            for (let i = 1; i < exp.path_positions.length; i++) {
-                const pos = exp.path_positions[i];
-                ctx.lineTo(pos.x * cellSize + cellSize/2, pos.y * cellSize + cellSize/2);
-            }
-            ctx.stroke();
-            ctx.globalAlpha = 1.0;
-            
-            if (exp.is_active) {
-                const pos = exp.current_position;
-                const centerX = pos.x * cellSize + cellSize/2;
-                const centerY = pos.y * cellSize + cellSize/2;
-                const size = cellSize * 0.3;
-                
-                ctx.fillStyle = color;
-                ctx.beginPath();
-                ctx.moveTo(centerX, centerY - size);
-                ctx.lineTo(centerX + size, centerY);
-                ctx.lineTo(centerX, centerY + size);
-                ctx.lineTo(centerX - size, centerY);
-                ctx.closePath();
-                ctx.fill();
-                
-                ctx.fillStyle = 'white';
-                ctx.beginPath();
-                ctx.moveTo(centerX, centerY - size * 0.5);
-                ctx.lineTo(centerX + size * 0.5, centerY);
-                ctx.lineTo(centerX, centerY + size * 0.5);
-                ctx.lineTo(centerX - size * 0.5, centerY);
-                ctx.closePath();
-                ctx.fill();
-            }
-        }
-        
-        setInterval(fetchGameState, 1000);
-        fetchGameState();
-    </script>
-</body>
-</html>`)
-}
 
 func handleRender(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
@@ -841,6 +670,7 @@ func drawTitle(img *image.RGBA, width, height int) {
 	
 	// Colors
 	bgColor := color.RGBA{248, 249, 250, 255}     // Light background
+	textColor := color.RGBA{66, 66, 66, 255}     // Dark gray text
 	activeColor := color.RGBA{33, 150, 243, 255} // Blue for active
 	goalColor := color.RGBA{76, 175, 80, 255}    // Green for goal
 	deadColor := color.RGBA{158, 158, 158, 255}  // Gray for dead
@@ -852,12 +682,33 @@ func drawTitle(img *image.RGBA, width, height int) {
 		}
 	}
 	
+	// Draw title text
+	if stats.GlobalStats.GoalFound {
+		titleText := "MAZE SOLVED!"
+		drawPixelText(img, titleText, 20, 10, goalColor)
+		
+		subtitleText := fmt.Sprintf("Total: %d Active: %d Visited: %d", 
+			stats.GlobalStats.TotalExplorations,
+			stats.GlobalStats.ActiveExplorations,
+			stats.GlobalStats.VisitedPositions)
+		drawPixelText(img, subtitleText, 20, 20, textColor)
+	} else {
+		titleText := "MAZE EXPLORATION"
+		drawPixelText(img, titleText, 20, 10, textColor)
+		
+		subtitleText := fmt.Sprintf("Total: %d Active: %d Visited: %d", 
+			stats.GlobalStats.TotalExplorations,
+			stats.GlobalStats.ActiveExplorations,
+			stats.GlobalStats.VisitedPositions)
+		drawPixelText(img, subtitleText, 20, 20, textColor)
+	}
+	
 	// Draw status indicators as colored bars
-	barHeight := 8
-	barY := height/2 - barHeight/2
+	barHeight := 6
+	barY := height - 20
 	
 	// Active explorations (blue bars)
-	activeWidth := min(stats.GlobalStats.ActiveExplorations*15, width-100)
+	activeWidth := min(stats.GlobalStats.ActiveExplorations*10, width-100)
 	for y := barY; y < barY+barHeight; y++ {
 		for x := 20; x < 20+activeWidth; x++ {
 			img.Set(x, y, activeColor)
@@ -865,8 +716,8 @@ func drawTitle(img *image.RGBA, width, height int) {
 	}
 	
 	// Total explorations count (smaller gray bars above active)
-	totalWidth := min(stats.GlobalStats.TotalExplorations*3, width-100)
-	for y := barY-12; y < barY-8; y++ {
+	totalWidth := min(stats.GlobalStats.TotalExplorations*2, width-100)
+	for y := barY-10; y < barY-6; y++ {
 		for x := 20; x < 20+totalWidth; x++ {
 			img.Set(x, y, deadColor)
 		}
@@ -874,19 +725,19 @@ func drawTitle(img *image.RGBA, width, height int) {
 	
 	// Goal indicator (big green square if found)
 	if stats.GlobalStats.GoalFound {
-		goalSize := 20
-		goalX := width - 40
-		goalY := height/2 - goalSize/2
+		goalSize := 12
+		goalX := width - 30
+		goalY := 10
 		for y := goalY; y < goalY+goalSize; y++ {
 			for x := goalX; x < goalX+goalSize; x++ {
 				img.Set(x, y, goalColor)
 			}
 		}
 		// White checkmark inside
-		for i := 0; i < 8; i++ {
-			img.Set(goalX+6+i, goalY+10+i/2, color.RGBA{255, 255, 255, 255})
-			if i < 4 {
-				img.Set(goalX+6-i, goalY+10+i, color.RGBA{255, 255, 255, 255})
+		for i := 0; i < 6; i++ {
+			img.Set(goalX+3+i, goalY+6+i/2, color.RGBA{255, 255, 255, 255})
+			if i < 3 {
+				img.Set(goalX+3-i, goalY+6+i, color.RGBA{255, 255, 255, 255})
 			}
 		}
 	}

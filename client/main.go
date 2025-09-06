@@ -16,17 +16,23 @@ type Direction struct {
 	Y int `json:"y"`
 }
 
+type AvailableMove struct {
+	Direction      Direction `json:"direction"`
+	TargetPosition Position  `json:"target_position"`
+}
+
 type Position struct {
 	X int `json:"x"`
 	Y int `json:"y"`
 }
 
 type MazeStatusResponse struct {
-	IsExplored           bool        `json:"is_explored"`
-	IsJunction           bool        `json:"is_junction"`
-	AvailableDirections  []Direction `json:"available_directions"`
-	IsGoal               bool        `json:"is_goal"`
-	GoalReachedByAny     bool        `json:"goal_reached_by_any"`
+	IsExplored           bool            `json:"is_explored"`
+	IsJunction           bool            `json:"is_junction"`
+	AvailableDirections  []Direction     `json:"available_directions"`
+	AvailableMoves       []AvailableMove `json:"available_moves"`
+	IsGoal               bool            `json:"is_goal"`
+	GoalReachedByAny     bool            `json:"goal_reached_by_any"`
 }
 
 type MoveRequest struct {
@@ -277,13 +283,13 @@ func displayMazeStatus(status MazeStatusResponse) {
 	fmt.Printf("  🎯 Goal: %v\n", status.IsGoal)
 	fmt.Printf("  🏆 Any reached goal: %v\n", status.GoalReachedByAny)
 	
-	if len(status.AvailableDirections) == 0 {
+	if len(status.AvailableMoves) == 0 {
 		fmt.Printf("  ➡️  Available moves: None (blocked/wall)\n")
 	} else {
-		fmt.Printf("  ➡️  Available moves (%d):\n", len(status.AvailableDirections))
-		for i, dir := range status.AvailableDirections {
-			dirName := getDirectionName(dir)
-			fmt.Printf("    %d. %s\n", i+1, dirName)
+		fmt.Printf("  ➡️  Available moves (%d):\n", len(status.AvailableMoves))
+		for i, move := range status.AvailableMoves {
+			dirName := getDirectionName(move.Direction)
+			fmt.Printf("    %d. %s to (%d, %d)\n", i+1, dirName, move.TargetPosition.X, move.TargetPosition.Y)
 		}
 		fmt.Printf("  💡 Use: maze_client move <exploration_name> <target_x> <target_y>\n")
 	}
