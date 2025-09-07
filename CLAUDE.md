@@ -18,9 +18,10 @@ Based on the execution result, choose the next step according to one of three sc
 1. Execute `./maze_client move ${exploration_name} available_move` to move using the current exploration_name
 2. Execute `./maze_client render ${exploration_name}` to render the current state
 3. Call `parallel_exploration` with:
+   - `source_snap_id` from environment variable `SOURCE_SNAP_ID`
    - `parallel_num = 1`
    - `max_results = 1` 
-   - `prompt = ['The exploration branch name is ${exploration_name}, please follow CLAUDE.md requirements for maze exploration']`
+   - `the shared prompts = ['execute `./maze_client render  ${exploration_name}`', 'The exploration branch name is ${exploration_name}, please follow CLAUDE.md requirements for maze exploration']`
 
 #### Scenario 2: Junction Reached
 **Condition:** Output shows `Junction reached - please start new exploration to explore different directions`
@@ -30,9 +31,10 @@ Based on the execution result, choose the next step according to one of three sc
 2. Start all new explorations by executing `./maze_client start ${new_random_exploration_name} position_x position_y` for each branch direction
 3. After all new exploration branches are started, execute `./maze_client render ${new_random_exploration_name1} ${new_random_exploration_name2} ...` to render all new branches together
 4. Use `parallel_exploration` for each new exploration branch with:
+   - `source_snap_id` from environment variable `SOURCE_SNAP_ID`
    - `parallel_num = 1`
    - `max_results = 1`
-   - `prompt = ['The exploration branch name is ${new_random_exploration_name}, please follow CLAUDE.md requirements for maze exploration']`
+   - `prompt = ['execute `./maze_client render ${new_random_exploration_name}`', 'The exploration branch name is ${new_random_exploration_name}, please follow CLAUDE.md requirements for maze exploration']`
 
 #### Scenario 3: No Available Moves
 **Condition:** Output shows `Available moves: None (blocked/wall)`
