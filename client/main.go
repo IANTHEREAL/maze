@@ -155,15 +155,10 @@ func main() {
 	case "render":
 		if len(args) == 1 {
 			// Render all explorations
-			handleRenderCommand("")
-		} else if len(args) == 2 {
-			// Render specific exploration
-			handleRenderCommand(args[1])
+			handleRenderCommand([]string{})
 		} else {
-			fmt.Println("❌ Usage: maze_client render [exploration_name]")
-			fmt.Println("   Example: maze_client render        (render all)")
-			fmt.Println("   Example: maze_client render s1     (render only s1)")
-			return
+			// Render specific explorations (support multiple)
+			handleRenderCommand(args[1:])
 		}
 		
 	case "tree":
@@ -248,7 +243,7 @@ func showUsage() {
 	fmt.Println("  maze_client start <name> <x> <y>      - Start new exploration")
 	fmt.Println("  maze_client status <name>             - Check exploration status")
 	fmt.Println("  maze_client move <name> <x> <y>       - Move exploration")
-	fmt.Println("  maze_client render [exploration_name] - Generate maze image (optionally filter by exploration)")
+	fmt.Println("  maze_client render [exploration_name...] - Generate maze image (optionally filter by explorations)")
 	fmt.Println("  maze_client tree                      - Show exploration tree")
 	fmt.Println()
 	fmt.Println("Examples:")
@@ -442,11 +437,18 @@ func getDirectionName(dir Direction) string {
 	}
 }
 
-func handleRenderCommand(explorationFilter string) {
+func handleRenderCommand(explorationFilters []string) {
 	url := fmt.Sprintf("%s/render", ServerURL)
-	if explorationFilter != "" {
-		url += fmt.Sprintf("?filter=%s", explorationFilter)
-		fmt.Printf("🎨 Rendering maze with exploration filter: %s...\n", explorationFilter)
+	if len(explorationFilters) > 0 {
+		// Multiple filters
+		for i, filter := range explorationFilters {
+			if i == 0 {
+				url += "?filter=" + filter
+			} else {
+				url += "&filter=" + filter
+			}
+		}
+		fmt.Printf("🎨 Rendering maze with exploration filters: %s...\n", strings.Join(explorationFilters, ", "))
 	} else {
 		fmt.Printf("🎨 Rendering complete maze...\n")
 	}
