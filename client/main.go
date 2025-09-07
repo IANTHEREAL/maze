@@ -153,7 +153,18 @@ func main() {
 		handleMoveCommand(args[1], args[2], args[3])
 		
 	case "render":
-		handleRenderCommand()
+		if len(args) == 1 {
+			// Render all explorations
+			handleRenderCommand("")
+		} else if len(args) == 2 {
+			// Render specific exploration
+			handleRenderCommand(args[1])
+		} else {
+			fmt.Println("❌ Usage: maze_client render [exploration_name]")
+			fmt.Println("   Example: maze_client render        (render all)")
+			fmt.Println("   Example: maze_client render s1     (render only s1)")
+			return
+		}
 		
 	case "tree":
 		handleTreeCommand()
@@ -237,7 +248,7 @@ func showUsage() {
 	fmt.Println("  maze_client start <name> <x> <y>      - Start new exploration")
 	fmt.Println("  maze_client status <name>             - Check exploration status")
 	fmt.Println("  maze_client move <name> <x> <y>       - Move exploration")
-	fmt.Println("  maze_client render                    - Generate maze image")
+	fmt.Println("  maze_client render [exploration_name] - Generate maze image (optionally filter by exploration)")
 	fmt.Println("  maze_client tree                      - Show exploration tree")
 	fmt.Println()
 	fmt.Println("Examples:")
@@ -284,11 +295,10 @@ func displayMazeStatus(status MazeStatusResponse) {
 	fmt.Printf("  🛤️  Junction: %v\n", status.IsJunction)
 	fmt.Printf("  🎯 Goal: %v\n", status.IsGoal)
 	fmt.Printf("  🏆 Any reached goal: %v\n", status.GoalReachedByAny)
-	fmt.Printf("  ✅ Exploration complete: %v\n", status.ExplorationComplete)
 	
 	if status.ExplorationComplete {
 		if len(status.JunctionPositions) > 0 {
-			fmt.Printf("  🚀 Start new explorations at junction positions:\n")
+			fmt.Printf("  🚀 Junction reached - please start new exploration to explore different directions:\n")
 			for i, pos := range status.JunctionPositions {
 				fmt.Printf("    %d. maze_client start <new_exploration_name> %d %d\n", i+1, pos.X, pos.Y)
 			}
@@ -432,8 +442,16 @@ func getDirectionName(dir Direction) string {
 	}
 }
 
-func handleRenderCommand() {
-	resp, err := http.Post(fmt.Sprintf("%s/render", ServerURL), "application/json", strings.NewReader("{}"))
+func handleRenderCommand(explorationFilter string) {
+	url := fmt.Sprintf("%s/render", ServerURL)
+	if explorationFilter != "" {
+		url += fmt.Sprintf("?filter=%s", explorationFilter)
+		fmt.Printf("🎨 Rendering maze with exploration filter: %s...\n", explorationFilter)
+	} else {
+		fmt.Printf("🎨 Rendering complete maze...\n")
+	}
+	
+	resp, err := http.Post(url, "application/json", strings.NewReader("{}"))
 	if err != nil {
 		fmt.Printf("❌ Error connecting to server: %v\n", err)
 		return

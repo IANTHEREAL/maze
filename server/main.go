@@ -138,7 +138,7 @@ func NewGame(width, height int, seed int64) *Game {
 
 // NewGameFromJSON loads game from Python pathsegment_tree.json
 func NewGameFromJSON(jsonFile string) (*Game, error) {
-	fmt.Printf("📂 Loading maze from '%s'...\n", jsonFile)
+	fmt.Printf("📂 Loading maze layout from '%s' (clearing exploration history)...\n", jsonFile)
 	
 	// Read JSON file
 	data, err := ioutil.ReadFile(jsonFile)
@@ -152,20 +152,23 @@ func NewGameFromJSON(jsonFile string) (*Game, error) {
 		return nil, fmt.Errorf("failed to parse JSON: %v", err)
 	}
 	
-	// Create game from loaded data
+	// Create game with maze layout but CLEAN exploration state
 	game := &Game{
-		Width:                     treeData.Metadata.Width,
-		Height:                    treeData.Metadata.Height,
-		Start:                     treeData.Metadata.Start,
-		Goal:                      treeData.Metadata.Goal,
+		// Load maze structure only
+		Width:  treeData.Metadata.Width,
+		Height: treeData.Metadata.Height,
+		Start:  treeData.Metadata.Start,
+		Goal:   treeData.Metadata.Goal,
+		
+		// Initialize CLEAN exploration state (ignore JSON exploration data)
 		Explorations:              make(map[string]*Exploration),
 		GlobalVisitedPositions:    make(map[Position]bool),
-		GoalFound:                 treeData.Metadata.GoalFound,
-		WinningExploration:        treeData.Metadata.WinningSegment,
-		NextExplorationID:         treeData.Metadata.NextID,
-		TotalSteps:                treeData.Metadata.TotalSteps,
-		MaxConcurrentExplorations: treeData.Metadata.MaxConcurrentSegments,
-		ShowOnlyWinner:            treeData.Metadata.ShowOnlyWinner,
+		GoalFound:                 false, // Reset to start fresh
+		WinningExploration:        nil,   // Reset to start fresh
+		NextExplorationID:         0,     // Reset to start fresh
+		TotalSteps:                0,     // Reset to start fresh
+		MaxConcurrentExplorations: 0,     // Reset to start fresh
+		ShowOnlyWinner:            false, // Reset to start fresh
 	}
 	
 	// Convert maze from [][]int to [][]CellType
@@ -177,18 +180,11 @@ func NewGameFromJSON(jsonFile string) (*Game, error) {
 		}
 	}
 	
-	// Load segments/explorations
-	for segmentID, exploration := range treeData.Segments {
-		game.Explorations[segmentID] = exploration
-	}
+	// DO NOT load segments or visited positions - start fresh!
+	// game.Explorations and game.GlobalVisitedPositions already initialized as empty
 	
-	// Load global visited positions
-	for _, pos := range treeData.GlobalVisitedPositions {
-		game.GlobalVisitedPositions[pos] = true
-	}
-	
-	fmt.Printf("✅ Maze loaded: %dx%d, %d segments, %d visited positions\n", 
-		game.Width, game.Height, len(game.Explorations), len(game.GlobalVisitedPositions))
+	fmt.Printf("✅ Maze layout loaded: %dx%d (exploration state reset for fresh start)\n", 
+		game.Width, game.Height)
 		
 	return game, nil
 }
@@ -279,6 +275,46 @@ func (g *Game) getExplorationDisplayColorAndStyle(exp *Exploration) (color.RGBA,
 	return segmentColors[baseColorIndex], 2, 0.9, 5
 }
 
+// findParentExploration finds the correct parent exploration for a new target position
+func (g *Game) findParentExploration(targetPos Position) *Exploration {
+	directions := []Direction{UP, DOWN, LEFT, RIGHT}
+	
+	// Check each adjacent position to see if there's a completed exploration there
+	for _, dir := range directions {
+		adjacentPos := Position{targetPos.X + dir.X, targetPos.Y + dir.Y}
+		
+		// Check if adjacent position is walkable
+		if !g.isWalkable(adjacentPos) {
+			continue
+		}
+		
+		// Find exploration that ends at this adjacent position
+		for _, exp := range g.Explorations {
+			// Must be completed exploration at junction
+			if exp.IsComplete && !exp.IsActive &&
+			   exp.CurrentPosition.X == adjacentPos.X && exp.CurrentPosition.Y == adjacentPos.Y {
+				
+				// Check if this is a junction based on MAZE STRUCTURE ONLY (ignore occupation)
+				validCount := 0
+				for _, checkDir := range directions {
+					checkPos := Position{adjacentPos.X + checkDir.X, adjacentPos.Y + checkDir.Y}
+					// Junction detection based only on maze structure, ignore occupation status
+					if g.isWalkable(checkPos) {
+						validCount++
+					}
+				}
+				
+				// Junction definition: multiple walkable directions in maze structure
+				if validCount > 1 {
+					return exp
+				}
+			}
+		}
+	}
+	
+	return nil // No valid parent found
+}
+
 type MazeStatusResponse struct {
 	IsExplored           bool            `json:"is_explored"`
 	IsJunction           bool            `json:"is_junction"`
@@ -346,12 +382,12 @@ func main() {
 		fmt.Printf("📂 Found existing maze file: %s\n", jsonFile)
 		loadedGame, err := NewGameFromJSON(jsonFile)
 		if err != nil {
-			fmt.Printf("⚠️  Failed to load from JSON: %v\n", err)
+			fmt.Printf("⚠️  Failed to load maze from JSON: %v\n", err)
 			fmt.Println("🎲 Generating new maze instead...")
 			game = NewGame(31, 31, 42)
 		} else {
 			game = loadedGame
-			fmt.Println("🔄 Loaded existing maze and exploration state")
+			fmt.Println("🔄 Loaded maze layout with fresh exploration state (ready for new exploration)")
 		}
 	} else {
 		fmt.Printf("🎲 No existing maze found, generating new maze...\n")
@@ -650,12 +686,31 @@ func (g *Game) moveExploration(explorationName string, nextPos Position) MoveRes
 
 	exploration, exists := g.Explorations[explorationName]
 	if !exists {
-		// Create new exploration starting at nextPos
-		// Assign color index based on creation order (matching Python version logic)
-		colorIndex := g.NextExplorationID % 6  // 6 colors excluding gold/gray
-		g.NextExplorationID++  // Increment after assigning color
+		// Assign color index based on creation order
+		colorIndex := g.NextExplorationID % 6
+		g.NextExplorationID++
 		
-		exploration = NewExploration(explorationName, nextPos, nextPos, nil, 0, colorIndex)
+		// CRITICAL: Auto-detect parent-child relationship (matching Python logic)
+		parentExp := g.findParentExploration(nextPos)
+		
+		if parentExp != nil {
+			// Found parent - create connected exploration
+			parentID := parentExp.ID
+			generation := parentExp.Generation + 1
+			
+			// Create exploration starting from parent's current position
+			exploration = NewExploration(explorationName, parentExp.CurrentPosition, nextPos, &parentID, generation, colorIndex)
+			
+			// Link parent to child (bidirectional relationship)
+			parentExp.ChildIDs = append(parentExp.ChildIDs, explorationName)
+			
+			fmt.Printf("🔗 Auto-linked '%s' as child of '%s' (gen %d)\n", explorationName, parentID, generation)
+		} else {
+			// No parent found - root exploration
+			exploration = NewExploration(explorationName, nextPos, nextPos, nil, 0, colorIndex)
+			fmt.Printf("🌱 Created root exploration '%s'\n", explorationName)
+		}
+		
 		g.Explorations[explorationName] = exploration
 		g.GlobalVisitedPositions[nextPos] = true
 		
@@ -735,9 +790,17 @@ func (g *Game) moveExploration(explorationName string, nextPos Position) MoveRes
 		// Junction reached - exploration is complete and becomes inactive (matching Python)
 		exploration.IsActive = false
 		exploration.IsComplete = true
+		
+		// Build junction hint message like status command
+		message := "Junction reached - please start new exploration to explore different directions:\n"
+		for i, dir := range validMoves {
+			targetPos := nextPos.Add(dir)
+			message += fmt.Sprintf("    %d. maze_client start <new_exploration_name> %d %d\n", i+1, targetPos.X, targetPos.Y)
+		}
+		
 		return MoveResponse{
 			Success: true,
-			Message: "Junction reached - exploration completed",
+			Message: message,
 			NewStatus: "junction_complete",
 		}
 	}
@@ -780,8 +843,11 @@ func handleRender(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generate PNG content
-	pngData, err := generateMazePNG()
+	// Get optional exploration filter from query parameters
+	explorationFilter := r.URL.Query().Get("filter")
+
+	// Generate PNG content with optional filter
+	pngData, err := generateMazePNG(explorationFilter)
 	if err != nil {
 		http.Error(w, "Failed to generate maze image", http.StatusInternalServerError)
 		return
@@ -793,7 +859,7 @@ func handleRender(w http.ResponseWriter, r *http.Request) {
 	w.Write(pngData)
 }
 
-func generateMazePNG() ([]byte, error) {
+func generateMazePNG(explorationFilter string) ([]byte, error) {
 	cellSize := 20
 	mazeWidth := game.Width * cellSize
 	mazeHeight := game.Height * cellSize
@@ -872,7 +938,35 @@ func generateMazePNG() ([]byte, error) {
 		colors["goal"], color.RGBA{255, 255, 255, 255}, 2)
 
 	// Draw exploration paths (matching Python version logic)
-	for _, exp := range game.Explorations {
+	// Filter explorations if requested
+	explorationsToRender := make(map[string]*Exploration)
+	if explorationFilter != "" {
+		// Find the target exploration
+		targetExp, exists := game.Explorations[explorationFilter]
+		if !exists {
+			// If filter doesn't exist, render nothing
+			explorationsToRender = make(map[string]*Exploration)
+		} else {
+			// Add target exploration and its parent chain
+			explorationsToRender[explorationFilter] = targetExp
+			
+			// Add parent chain for context
+			currentExp := targetExp
+			for currentExp.ParentID != nil {
+				parentExp, exists := game.Explorations[*currentExp.ParentID]
+				if !exists {
+					break
+				}
+				explorationsToRender[*currentExp.ParentID] = parentExp
+				currentExp = parentExp
+			}
+		}
+	} else {
+		// No filter - render all explorations
+		explorationsToRender = game.Explorations
+	}
+	
+	for _, exp := range explorationsToRender {
 		if len(exp.PathPositions) == 0 {
 			continue // Skip empty paths
 		}
