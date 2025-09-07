@@ -843,11 +843,11 @@ func handleRender(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get optional exploration filter from query parameters
-	explorationFilter := r.URL.Query().Get("filter")
+	// Get optional exploration filters from query parameters
+	explorationFilters := r.URL.Query()["filter"]
 
-	// Generate PNG content with optional filter
-	pngData, err := generateMazePNG(explorationFilter)
+	// Generate PNG content with optional filters
+	pngData, err := generateMazePNG(explorationFilters)
 	if err != nil {
 		http.Error(w, "Failed to generate maze image", http.StatusInternalServerError)
 		return
@@ -859,7 +859,7 @@ func handleRender(w http.ResponseWriter, r *http.Request) {
 	w.Write(pngData)
 }
 
-func generateMazePNG(explorationFilter string) ([]byte, error) {
+func generateMazePNG(explorationFilters []string) ([]byte, error) {
 	cellSize := 20
 	mazeWidth := game.Width * cellSize
 	mazeHeight := game.Height * cellSize
@@ -940,25 +940,25 @@ func generateMazePNG(explorationFilter string) ([]byte, error) {
 	// Draw exploration paths (matching Python version logic)
 	// Filter explorations if requested
 	explorationsToRender := make(map[string]*Exploration)
-	if explorationFilter != "" {
-		// Find the target exploration
-		targetExp, exists := game.Explorations[explorationFilter]
-		if !exists {
-			// If filter doesn't exist, render nothing
-			explorationsToRender = make(map[string]*Exploration)
-		} else {
-			// Add target exploration and its parent chain
-			explorationsToRender[explorationFilter] = targetExp
-			
-			// Add parent chain for context
-			currentExp := targetExp
-			for currentExp.ParentID != nil {
-				parentExp, exists := game.Explorations[*currentExp.ParentID]
-				if !exists {
-					break
+	if len(explorationFilters) > 0 {
+		// Process each filter
+		for _, filter := range explorationFilters {
+			// Find the target exploration
+			targetExp, exists := game.Explorations[filter]
+			if exists {
+				// Add target exploration and its parent chain
+				explorationsToRender[filter] = targetExp
+				
+				// Add parent chain for context
+				currentExp := targetExp
+				for currentExp.ParentID != nil {
+					parentExp, exists := game.Explorations[*currentExp.ParentID]
+					if !exists {
+						break
+					}
+					explorationsToRender[*currentExp.ParentID] = parentExp
+					currentExp = parentExp
 				}
-				explorationsToRender[*currentExp.ParentID] = parentExp
-				currentExp = parentExp
 			}
 		}
 	} else {
