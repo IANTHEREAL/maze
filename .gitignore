@@ -2,3 +2,6 @@ maze*client
 maze*server
 __pycache__
 *.png
+.DS_Store
+.maze_server
+pantheon_exploration.gif
