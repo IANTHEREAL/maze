@@ -345,20 +345,20 @@ class SegmentPathViewer:
             if segment.id == target_segment_id:
                 # Target segment - bright red
                 color = self.COLORS['target_color']
-                width = 6.0
+                width = 12.0
                 alpha = 1.0
                 zorder = 15
             elif segment.found_goal:
                 # Goal segment - gold
                 color = self.COLORS['winner_color']
-                width = 5.0
+                width = 10.0
                 alpha = 1.0
                 zorder = 12
             else:
                 # Regular segment - use fixed color with higher prominence
                 base_color_index = segment.fixed_color_index % len(self.COLORS['segment_colors'])
                 color = self.COLORS['segment_colors'][base_color_index]
-                width = 4.0
+                width = 8.0
                 alpha = 0.9
                 zorder = 10
             
