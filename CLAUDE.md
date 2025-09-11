@@ -38,18 +38,18 @@ Execute `./maze_client status ${exploration_name}` to check current status and a
 
 ## Phase 2: Decision and Recursion Phase
 
-Based on Phase 1 scenario results, must to call mcp tool `parallel_explore` to conduct Recursion exploration with appropriate parameters:
+1. Fetch the latest source_snap_id from ENVs, which is always changes; 2. Then, based on Phase 1 scenario results, call mcp tool `parallel_explore` to conduct Recursion exploration with appropriate parameters.
 
 ### After Scenario 1 (Single Move)
 Continue exploring the current branch using the same exploration_name:
 ```python
 parallel_explore(
-    source_snap=source_snap_id (fetch from env),
+    source_snap=latest source_snap_id,
     parallels_num=1,
     max_results=1,
     shared_prompt_sequence=[
         "exploration_name=${exploration_name}; Follow @CLAUDE.md to execute phase 1, determine next scenario and execute corresponding actions",
-        "exploration_name=${exploration_name}; query Follow @CLAUDE.md to execute phase 2, spawn correct recursive branches using parallel_explore mcp tool"
+        "exploration_name=${exploration_name}; Follow @CLAUDE.md to execute phase 2, spawn correct recursive branches using parallel_explore mcp tool"
     ]
 )
 ```
@@ -59,12 +59,12 @@ Create parallel exploration for each branch created in Phase 1:
 ```python
 # For each branch_name generated in Phase 1:
 parallel_explore(
-    source_snap=source_snap_id (fetch from env),
+    source_snap=latest source_snap_id,
     parallels_num=1,
     max_results=1,
     shared_prompt_sequence=[
         "exploration_name=${branch_name}; Follow @CLAUDE.md to execute phase 1, determine next scenario and execute corresponding actions",
-        "exploration_name=${branch_name}; Follow @CLAUDE.md to execute phase 2, spawn correct recursive branches"
+        "exploration_name=${branch_name}; Follow @CLAUDE.md to execute phase 2, spawn correct recursive branches using parallel_explore mcp tool"
     ]
 )
 ```
