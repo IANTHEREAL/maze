@@ -6,7 +6,7 @@ This document defines a two-phase recursive maze exploration system compatible w
 
 ### Environment Variables
 - `exploration_name`: Current exploration name (provided by caller when invoking parallel_explore)
-- `source_snap_id`: Snap ID from the completed previous phase, automatically provided by Pantheon
+- `source_snap_id`: Snap ID from the completed previous phase, automatically provided by Pantheon. Only need to fetch i phase 2
 
 ## Phase 1: Action Execution Phase
 
@@ -38,7 +38,7 @@ Execute `./maze_client status ${exploration_name}` to check current status and a
 
 ## Phase 2: Decision and Recursion Phase
 
-Based on Phase 1 scenario results, call `parallel_explore` with appropriate parameters:
+Based on Phase 1 scenario results, must to call `parallel_explore` to conduct Recursion exploration with appropriate parameters:
 
 ### After Scenario 1 (Single Move)
 Continue exploring the current branch using the same exploration_name:
