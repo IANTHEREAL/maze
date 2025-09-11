@@ -38,7 +38,8 @@ Execute `./maze_client status ${exploration_name}` to check current status and a
 
 ## Phase 2: Decision and Recursion Phase
 
-1. Fetch the latest source_snap_id from ENVs, which is always changes; 2. Then, based on Phase 1 scenario results, call mcp tool `parallel_explore` to conduct Recursion exploration with appropriate parameters.
+1. Fetch the source_snap_id from ENVs by execute shell command `echo $source_snap_id`, which is always changes; (don't use a wrong source snap id, only get right source snap id using this method)
+2. Then, based on Phase 1 scenario results, call mcp tool `parallel_explore` to conduct Recursion exploration with appropriate parameters.
 
 ### After Scenario 1 (Single Move)
 Continue exploring the current branch using the same exploration_name:
