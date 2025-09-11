@@ -44,12 +44,12 @@ Based on Phase 1 scenario results, call `parallel_explore` with appropriate para
 Continue exploring the current branch using the same exploration_name:
 ```python
 parallel_explore(
-    source_snap=source_snap_id,
+    source_snap=source_snap_id (fetch from env),
     parallels_num=1,
     max_results=1,
     shared_prompt_sequence=[
         "exploration_name=${exploration_name}; Follow @CLAUDE.md to execute phase 1, determine next scenario and execute corresponding actions",
-        "exploration_name=${exploration_name}; Follow @CLAUDE.md to execute phase 2, spawn correct recursive branches"
+        "exploration_name=${exploration_name}; query Follow @CLAUDE.md to execute phase 2, spawn correct recursive branches"
     ]
 )
 ```
@@ -59,7 +59,7 @@ Create parallel exploration for each branch created in Phase 1:
 ```python
 # For each branch_name generated in Phase 1:
 parallel_explore(
-    source_snap=source_snap_id,
+    source_snap=source_snap_id (fetch from env),
     parallels_num=1,
     max_results=1,
     shared_prompt_sequence=[
