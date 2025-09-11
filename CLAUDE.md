@@ -38,7 +38,7 @@ Execute `./maze_client status ${exploration_name}` to check current status and a
 
 ## Phase 2: Decision and Recursion Phase
 
-Based on Phase 1 scenario results, must to call `parallel_explore` to conduct Recursion exploration with appropriate parameters:
+Based on Phase 1 scenario results, must to call mcp tool `parallel_explore` to conduct Recursion exploration with appropriate parameters:
 
 ### After Scenario 1 (Single Move)
 Continue exploring the current branch using the same exploration_name:
@@ -49,7 +49,7 @@ parallel_explore(
     max_results=1,
     shared_prompt_sequence=[
         "exploration_name=${exploration_name}; Follow @CLAUDE.md to execute phase 1, determine next scenario and execute corresponding actions",
-        "exploration_name=${exploration_name}; query Follow @CLAUDE.md to execute phase 2, spawn correct recursive branches"
+        "exploration_name=${exploration_name}; query Follow @CLAUDE.md to execute phase 2, spawn correct recursive branches using parallel_explore mcp tool"
     ]
 )
 ```
